@@ -109,21 +109,25 @@ locals {
             stringData = <<-EOT
 <style>
   {% include 'style.css' %}
-  .jp-num-grid { display: grid; gap: 18px; max-width: 420px; }
-  .jp-num-field label { font-weight: 600; display: block; margin-bottom: 6px; }
-  .jp-num-field input { width: 100%; padding: 8px 10px; font-size: 1em;
+  .jp-grid { display: grid; gap: 18px; max-width: 440px; }
+  .jp-field label { font-weight: 600; display: block; margin-bottom: 6px; }
+  .jp-field input[type=number] { width: 100%; padding: 8px 10px; font-size: 1em;
     border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-  .jp-num-field input:invalid { border-color: #c00; }
+  .jp-field input[type=number]:invalid { border-color: #c00; }
+  .jp-check { display: flex; align-items: center; gap: 10px; }
+  .jp-check input[type=checkbox] { width: 18px; height: 18px; margin: 0; }
+  .jp-check label { font-weight: 600; margin: 0; cursor: pointer; }
+  .jp-hint { font-weight: 400; color: #666; font-size: 0.9em; }
   .jp-err { color: #c00; font-size: 0.85em; margin-top: 4px; display: none; }
   .jp-err.show { display: block; }
 </style>
 
-{#- O formulário usa três campos numéricos em vez dos dropdowns padrão. Cada
-    campo envia "profile-option-{profile}--{option}--unlisted-choice", que o
-    KubeSpawner valida contra validation_regex e substitui em {value} nos
-    kubespawner_override. Quando o usuário mantém o valor padrão, o campo não
-    recebe atributo "name" e o KubeSpawner aplica o default declarado em
-    "choices". #}
+{#- Formulário com dois campos numéricos (CPU e memória) e um checkbox para
+    GPU. Os numéricos enviam "profile-option-{profile}--{option}--unlisted-choice",
+    validado contra validation_regex e substituído em {value}. O checkbox envia
+    "profile-option-{profile}--gpu" com a choice "one" quando marcado; quando
+    desmarcado nada é enviado e o KubeSpawner aplica a choice default ("none"),
+    que não declara nvidia.com/gpu. #}
 <div class="form-group" id="kubespawner-profiles-list">
   {%- for profile in profile_list %}
   <label for="profile-item-{{ profile.slug }}" class="profile js-profile-label" style="cursor:default">
@@ -136,29 +140,43 @@ locals {
       {%- if profile.description %}<p>{{ profile.description }}</p>{%- endif %}
 
       {%- if profile.profile_options %}
-      <div class="jp-num-grid">
+      <div class="jp-grid">
         {%- for option_key, option in profile.profile_options.items() %}
+        {%- if option_key == 'gpu' %}
+        {%- set gpu_on = namespace(value='') %}
+        {%- for ck, choice in option.choices.items() %}
+          {%- if ck != 'none' %}{% set gpu_on.value = ck %}{% endif %}
+        {%- endfor %}
+        <div class="jp-field jp-check">
+          <input type="checkbox"
+                 id="chk-{{ profile.slug }}-gpu"
+                 data-field="profile-option-{{ profile.slug }}--gpu"
+                 data-value="{{ gpu_on.value }}"
+                 class="js-gpu-checkbox" />
+          <label for="chk-{{ profile.slug }}-gpu">
+            {{ option.display_name }}
+            <span class="jp-hint">(marcar para solicitar 1 GPU)</span>
+          </label>
+        </div>
+        {%- else %}
         {%- set uc = option.unlisted_choice %}
-        {#- default numérico: valor da choice default (o id da choice é o
-            próprio número para cpu/memory; para gpu a default é "none" -> 0). #}
         {%- set ns = namespace(default='1') %}
         {%- for ck, choice in option.choices.items() %}
-          {%- if choice.default %}
-            {%- set ns.default = '0' if ck == 'none' else ck %}
-          {%- endif %}
+          {%- if choice.default %}{% set ns.default = ck %}{% endif %}
         {%- endfor %}
-        <div class="jp-num-field">
+        <div class="jp-field">
           <label for="num-{{ profile.slug }}-{{ option_key }}">{{ option.display_name }}</label>
           <input type="number"
                  id="num-{{ profile.slug }}-{{ option_key }}"
                  data-field="profile-option-{{ profile.slug }}--{{ option_key }}--unlisted-choice"
                  value="{{ ns.default }}"
                  {%- if uc.validation_regex %} pattern="{{ uc.validation_regex }}"{% endif %}
-                 {%- if option_key == 'cpu' %} step="0.1" min="0.1"{% else %} step="1" min="0"{% endif %}
+                 {%- if option_key == 'cpu' %} step="0.1" min="0.1"{% else %} step="1" min="1"{% endif %}
                  title="{{ uc.validation_message }}"
                  class="form-control js-num-input" />
           <div class="jp-err" id="err-{{ profile.slug }}-{{ option_key }}">{{ uc.validation_message }}</div>
         </div>
+        {%- endif %}
         {%- endfor %}
       </div>
       {%- endif %}
@@ -169,34 +187,51 @@ locals {
 
 <script>
 (function () {
-  function sync(input) {
-    // Envia o campo apenas quando o valor difere do default; assim o
-    // KubeSpawner aplica os defaults declarados em "choices".
-    var field = input.getAttribute('data-field');
-    if (input.value !== '' && input.value !== input.defaultValue) {
-      input.setAttribute('name', field);
-    } else {
-      input.removeAttribute('name');
-    }
+  function selectProfile(el) {
+    var label = el.closest('.js-profile-label');
+    if (label) { label.querySelector('input[type=radio]').checked = true; }
   }
-  function validate(input) {
-    var ok = input.checkValidity();
-    var err = document.getElementById('err-' + input.id.replace('num-', ''));
-    if (err) { err.classList.toggle('show', !ok); }
-    return ok;
-  }
+
+  // Campos numéricos: só enviam quando o valor difere do default, para que o
+  // KubeSpawner aplique a choice default declarada.
   document.querySelectorAll('.js-num-input').forEach(function (input) {
-    sync(input);
-    input.addEventListener('input', function () { sync(input); validate(input); });
-    input.addEventListener('blur', function () { validate(input); });
-    input.addEventListener('focus', function () {
-      var label = input.closest('.js-profile-label');
-      if (label) { label.querySelector('input[type=radio]').checked = true; }
-    });
+    var field = input.getAttribute('data-field');
+    function sync() {
+      if (input.value !== '' && input.value !== input.defaultValue) {
+        input.setAttribute('name', field);
+      } else {
+        input.removeAttribute('name');
+      }
+    }
+    function validate() {
+      var err = document.getElementById('err-' + input.id.replace('num-', ''));
+      if (err) { err.classList.toggle('show', !input.checkValidity()); }
+    }
+    sync();
+    input.addEventListener('input', function () { sync(); validate(); });
+    input.addEventListener('blur', validate);
+    input.addEventListener('focus', function () { selectProfile(input); });
+  });
+
+  // Checkbox de GPU: quando marcado envia a choice "one"; quando desmarcado
+  // remove o "name" e o default ("none") é aplicado.
+  document.querySelectorAll('.js-gpu-checkbox').forEach(function (cb) {
+    var field = cb.getAttribute('data-field');
+    var value = cb.getAttribute('data-value');
+    function sync() {
+      if (cb.checked) {
+        cb.setAttribute('name', field);
+        cb.setAttribute('value', value);
+      } else {
+        cb.removeAttribute('name');
+        cb.removeAttribute('value');
+      }
+    }
+    sync();
+    cb.addEventListener('change', function () { sync(); selectProfile(cb); });
   });
 })();
 </script>
-
             EOT
           }
         }
@@ -328,12 +363,16 @@ locals {
                 }
               }
               gpu = {
-                display_name = "GPUs (0 = sem GPU)"
+                display_name = "GPU"
+                # Rendered as a checkbox: checked sends the "one" choice,
+                # unchecked sends nothing and the default "none" applies.
+                # There is no unlisted_choice because the cluster nodes expose
+                # a single GPU each, so only "0" or "1" makes sense here.
                 choices = {
-                  # 0 GPUs is the default so the module works on clusters
-                  # without the NVIDIA device plugin (e.g. kind). "none"
-                  # removes the nvidia.com/gpu request instead of sending 0,
-                  # which Kubernetes rejects for extended resources.
+                  # "none" is the default so the module works on clusters
+                  # without the NVIDIA device plugin (e.g. kind). It removes
+                  # the nvidia.com/gpu request instead of sending 0, which
+                  # Kubernetes rejects for extended resources.
                   none = {
                     default = true
                     kubespawner_override = {
@@ -343,19 +382,15 @@ locals {
                       tolerations               = []
                     }
                   }
-                }
-                unlisted_choice = {
-                  enabled            = true
-                  display_name       = "GPUs"
-                  validation_regex   = "^[1-9][0-9]*$"
-                  validation_message = "Informe 1 ou 2 GPUs; deixe 0 para nenhuma"
-                  kubespawner_override = merge(
-                    {
-                      extra_resource_limits     = { "nvidia.com/gpu" = "{value}" }
-                      extra_resource_guarantees = { "nvidia.com/gpu" = "{value}" }
-                    },
-                    local.gpu_overrides
-                  )
+                  one = {
+                    kubespawner_override = merge(
+                      {
+                        extra_resource_limits     = { "nvidia.com/gpu" = "1" }
+                        extra_resource_guarantees = { "nvidia.com/gpu" = "1" }
+                      },
+                      local.gpu_overrides
+                    )
+                  }
                 }
               }
             }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.5.0...v1.6.0) (2026-10-29)
+
+
+### 🚀 New Features
+
+* render the GPU option as a checkbox instead of a number field. The cluster nodes expose a single GPU each, so only "with" or "without" makes sense: checking it sends the `one` choice (`nvidia.com/gpu: 1`) and leaving it unchecked sends nothing, so the default `none` applies and no GPU is requested.
+
 ## [1.5.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.4.0...v1.5.0) (2026-10-29)
 
 

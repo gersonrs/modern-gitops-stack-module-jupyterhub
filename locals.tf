@@ -59,7 +59,7 @@ locals {
             # lets the hub fall back to its own spawn.html, which renders the
             # kubespawner form. The other customised pages are kept.
             args = [
-              "cd /tmp && git clone --branch=main https://github.com/GersonRS/jupyterhub-templates.git && cp -r jupyterhub-templates/templates/* /templates && cp -r jupyterhub-templates/extra-assets/* /extra-assets && rm -f /templates/spawn.html"
+              "cd /tmp && git clone --branch=main https://github.com/GersonRS/jupyterhub-templates.git && cp -r jupyterhub-templates/templates/* /templates && cp -r jupyterhub-templates/extra-assets/* /extra-assets && mkdir -p /spawner-templates && cp jupyterhub-templates/templates/form.html /spawner-templates/form.html && rm -f /templates/spawn.html"
             ]
             volumeMounts = [
               {
@@ -69,6 +69,10 @@ locals {
               {
                 name      = "custom-templates-extra-assets"
                 mountPath = "/extra-assets"
+              },
+              {
+                name      = "custom-spawner-templates"
+                mountPath = "/spawner-templates"
               }
             ]
           }
@@ -81,6 +85,10 @@ locals {
           {
             name     = "custom-templates-extra-assets"
             emptyDir = {}
+          },
+          {
+            name     = "custom-spawner-templates"
+            emptyDir = {}
           }
         ]
         extraVolumeMounts = [
@@ -91,149 +99,21 @@ locals {
           {
             name      = "custom-templates-extra-assets"
             mountPath = "/usr/local/share/jupyterhub/static/extra_assets"
+          },
+          {
+            name      = "custom-spawner-templates"
+            mountPath = "/usr/local/share/jupyterhub/custom_spawner_templates"
           }
         ]
         extraConfig = {
           templates = "c.JupyterHub.template_paths = ['/usr/local/share/jupyterhub/custom_templates/']"
-          # The three numeric spawn fields are rendered by a custom form.html.
-          # KubeSpawner looks for it in additional_profile_form_template_paths
-          # before falling back to its own templates/ directory, so the
-          # dropdowns are replaced by plain number inputs.
+          # The three numeric spawn fields are rendered by form.html, which the
+          # git-clone-templates initContainer copies from the jupyterhub-templates
+          # repository into the custom-spawner-templates volume. KubeSpawner
+          # looks for it in additional_profile_form_template_paths before falling
+          # back to its own templates/ directory, so the dropdowns are replaced
+          # by plain number inputs.
           profileForm = "c.KubeSpawner.additional_profile_form_template_paths = ['/usr/local/share/jupyterhub/custom_spawner_templates']"
-        }
-        # Custom KubeSpawner form: one number input per resource (cpu, memory,
-        # gpu) instead of the default <select> dropdowns.
-        extraFiles = {
-          spawner-form = {
-            mountPath  = "/usr/local/share/jupyterhub/custom_spawner_templates/form.html"
-            stringData = <<-EOT
-<style>
-  {% include 'style.css' %}
-  .jp-grid { display: grid; gap: 18px; max-width: 440px; }
-  .jp-field label { font-weight: 600; display: block; margin-bottom: 6px; }
-  .jp-field input[type=number] { width: 100%; padding: 8px 10px; font-size: 1em;
-    border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-  .jp-field input[type=number]:invalid { border-color: #c00; }
-  .jp-check { display: flex; align-items: center; gap: 10px; }
-  .jp-check input[type=checkbox] { width: 18px; height: 18px; margin: 0; }
-  .jp-check label { font-weight: 600; margin: 0; cursor: pointer; }
-  .jp-hint { font-weight: 400; color: #666; font-size: 0.9em; }
-  .jp-err { color: #c00; font-size: 0.85em; margin-top: 4px; display: none; }
-  .jp-err.show { display: block; }
-</style>
-
-{#- Formulário com dois campos numéricos (CPU e memória) e um checkbox para
-    GPU. Os numéricos enviam "profile-option-{profile}--{option}--unlisted-choice",
-    validado contra validation_regex e substituído em {value}. O checkbox envia
-    "profile-option-{profile}--gpu" com a choice "one" quando marcado; quando
-    desmarcado nada é enviado e o KubeSpawner aplica a choice default ("none"),
-    que não declara nvidia.com/gpu. #}
-<div class="form-group" id="kubespawner-profiles-list">
-  {%- for profile in profile_list %}
-  <label for="profile-item-{{ profile.slug }}" class="profile js-profile-label" style="cursor:default">
-    <div class="radio">
-      <input type="radio" name="profile" id="profile-item-{{ profile.slug }}"
-             value="{{ profile.slug }}" {% if profile.default %}checked{% endif %} />
-    </div>
-    <div style="width:100%">
-      <h3>{{ profile.display_name }}</h3>
-      {%- if profile.description %}<p>{{ profile.description }}</p>{%- endif %}
-
-      {%- if profile.profile_options %}
-      <div class="jp-grid">
-        {%- for option_key, option in profile.profile_options.items() %}
-        {%- if option_key == 'gpu' %}
-        {%- set gpu_on = namespace(value='') %}
-        {%- for ck, choice in option.choices.items() %}
-          {%- if ck != 'none' %}{% set gpu_on.value = ck %}{% endif %}
-        {%- endfor %}
-        <div class="jp-field jp-check">
-          <input type="checkbox"
-                 id="chk-{{ profile.slug }}-gpu"
-                 data-field="profile-option-{{ profile.slug }}--gpu"
-                 data-value="{{ gpu_on.value }}"
-                 class="js-gpu-checkbox" />
-          <label for="chk-{{ profile.slug }}-gpu">
-            {{ option.display_name }}
-            <span class="jp-hint">(marcar para solicitar 1 GPU)</span>
-          </label>
-        </div>
-        {%- else %}
-        {%- set uc = option.unlisted_choice %}
-        {%- set ns = namespace(default='1') %}
-        {%- for ck, choice in option.choices.items() %}
-          {%- if choice.default %}{% set ns.default = ck %}{% endif %}
-        {%- endfor %}
-        <div class="jp-field">
-          <label for="num-{{ profile.slug }}-{{ option_key }}">{{ option.display_name }}</label>
-          <input type="number"
-                 id="num-{{ profile.slug }}-{{ option_key }}"
-                 data-field="profile-option-{{ profile.slug }}--{{ option_key }}--unlisted-choice"
-                 value="{{ ns.default }}"
-                 {%- if uc.validation_regex %} pattern="{{ uc.validation_regex }}"{% endif %}
-                 {%- if option_key == 'cpu' %} step="0.1" min="0.1"{% else %} step="1" min="1"{% endif %}
-                 title="{{ uc.validation_message }}"
-                 class="form-control js-num-input" />
-          <div class="jp-err" id="err-{{ profile.slug }}-{{ option_key }}">{{ uc.validation_message }}</div>
-        </div>
-        {%- endif %}
-        {%- endfor %}
-      </div>
-      {%- endif %}
-    </div>
-  </label>
-  {%- endfor %}
-</div>
-
-<script>
-(function () {
-  function selectProfile(el) {
-    var label = el.closest('.js-profile-label');
-    if (label) { label.querySelector('input[type=radio]').checked = true; }
-  }
-
-  // Campos numéricos: só enviam quando o valor difere do default, para que o
-  // KubeSpawner aplique a choice default declarada.
-  document.querySelectorAll('.js-num-input').forEach(function (input) {
-    var field = input.getAttribute('data-field');
-    function sync() {
-      if (input.value !== '' && input.value !== input.defaultValue) {
-        input.setAttribute('name', field);
-      } else {
-        input.removeAttribute('name');
-      }
-    }
-    function validate() {
-      var err = document.getElementById('err-' + input.id.replace('num-', ''));
-      if (err) { err.classList.toggle('show', !input.checkValidity()); }
-    }
-    sync();
-    input.addEventListener('input', function () { sync(); validate(); });
-    input.addEventListener('blur', validate);
-    input.addEventListener('focus', function () { selectProfile(input); });
-  });
-
-  // Checkbox de GPU: quando marcado envia a choice "one"; quando desmarcado
-  // remove o "name" e o default ("none") é aplicado.
-  document.querySelectorAll('.js-gpu-checkbox').forEach(function (cb) {
-    var field = cb.getAttribute('data-field');
-    var value = cb.getAttribute('data-value');
-    function sync() {
-      if (cb.checked) {
-        cb.setAttribute('name', field);
-        cb.setAttribute('value', value);
-      } else {
-        cb.removeAttribute('name');
-        cb.removeAttribute('value');
-      }
-    }
-    sync();
-    cb.addEventListener('change', function () { sync(); selectProfile(cb); });
-  });
-})();
-</script>
-            EOT
-          }
         }
         extraEnv = {
           OAUTH_TLS_VERIFY = "0"
@@ -308,7 +188,7 @@ locals {
             default      = true
             profile_options = {
               # One number input per resource, rendered by the custom
-              # form.html shipped through hub.extraFiles. Each field posts
+              # form.html cloned from the jupyterhub-templates repository. Each field posts
               # profile-option-{slug}--{option}--unlisted-choice, so the value
               # the user types is checked against validation_regex and
               # substituted into {value}.

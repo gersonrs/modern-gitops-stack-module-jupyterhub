@@ -95,6 +95,110 @@ locals {
         ]
         extraConfig = {
           templates = "c.JupyterHub.template_paths = ['/usr/local/share/jupyterhub/custom_templates/']"
+          # The three numeric spawn fields are rendered by a custom form.html.
+          # KubeSpawner looks for it in additional_profile_form_template_paths
+          # before falling back to its own templates/ directory, so the
+          # dropdowns are replaced by plain number inputs.
+          profileForm = "c.KubeSpawner.additional_profile_form_template_paths = ['/usr/local/share/jupyterhub/custom_spawner_templates']"
+        }
+        # Custom KubeSpawner form: one number input per resource (cpu, memory,
+        # gpu) instead of the default <select> dropdowns.
+        extraFiles = {
+          spawner-form = {
+            mountPath  = "/usr/local/share/jupyterhub/custom_spawner_templates/form.html"
+            stringData = <<-EOT
+<style>
+  {% include 'style.css' %}
+  .jp-num-grid { display: grid; gap: 18px; max-width: 420px; }
+  .jp-num-field label { font-weight: 600; display: block; margin-bottom: 6px; }
+  .jp-num-field input { width: 100%; padding: 8px 10px; font-size: 1em;
+    border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+  .jp-num-field input:invalid { border-color: #c00; }
+  .jp-err { color: #c00; font-size: 0.85em; margin-top: 4px; display: none; }
+  .jp-err.show { display: block; }
+</style>
+
+{#- O formulário usa três campos numéricos em vez dos dropdowns padrão. Cada
+    campo envia "profile-option-{profile}--{option}--unlisted-choice", que o
+    KubeSpawner valida contra validation_regex e substitui em {value} nos
+    kubespawner_override. Quando o usuário mantém o valor padrão, o campo não
+    recebe atributo "name" e o KubeSpawner aplica o default declarado em
+    "choices". #}
+<div class="form-group" id="kubespawner-profiles-list">
+  {%- for profile in profile_list %}
+  <label for="profile-item-{{ profile.slug }}" class="profile js-profile-label" style="cursor:default">
+    <div class="radio">
+      <input type="radio" name="profile" id="profile-item-{{ profile.slug }}"
+             value="{{ profile.slug }}" {% if profile.default %}checked{% endif %} />
+    </div>
+    <div style="width:100%">
+      <h3>{{ profile.display_name }}</h3>
+      {%- if profile.description %}<p>{{ profile.description }}</p>{%- endif %}
+
+      {%- if profile.profile_options %}
+      <div class="jp-num-grid">
+        {%- for option_key, option in profile.profile_options.items() %}
+        {%- set uc = option.unlisted_choice %}
+        {#- default numérico: valor da choice default (o id da choice é o
+            próprio número para cpu/memory; para gpu a default é "none" -> 0). #}
+        {%- set ns = namespace(default='1') %}
+        {%- for ck, choice in option.choices.items() %}
+          {%- if choice.default %}
+            {%- set ns.default = '0' if ck == 'none' else ck %}
+          {%- endif %}
+        {%- endfor %}
+        <div class="jp-num-field">
+          <label for="num-{{ profile.slug }}-{{ option_key }}">{{ option.display_name }}</label>
+          <input type="number"
+                 id="num-{{ profile.slug }}-{{ option_key }}"
+                 data-field="profile-option-{{ profile.slug }}--{{ option_key }}--unlisted-choice"
+                 value="{{ ns.default }}"
+                 {%- if uc.validation_regex %} pattern="{{ uc.validation_regex }}"{% endif %}
+                 {%- if option_key == 'cpu' %} step="0.1" min="0.1"{% else %} step="1" min="0"{% endif %}
+                 title="{{ uc.validation_message }}"
+                 class="form-control js-num-input" />
+          <div class="jp-err" id="err-{{ profile.slug }}-{{ option_key }}">{{ uc.validation_message }}</div>
+        </div>
+        {%- endfor %}
+      </div>
+      {%- endif %}
+    </div>
+  </label>
+  {%- endfor %}
+</div>
+
+<script>
+(function () {
+  function sync(input) {
+    // Envia o campo apenas quando o valor difere do default; assim o
+    // KubeSpawner aplica os defaults declarados em "choices".
+    var field = input.getAttribute('data-field');
+    if (input.value !== '' && input.value !== input.defaultValue) {
+      input.setAttribute('name', field);
+    } else {
+      input.removeAttribute('name');
+    }
+  }
+  function validate(input) {
+    var ok = input.checkValidity();
+    var err = document.getElementById('err-' + input.id.replace('num-', ''));
+    if (err) { err.classList.toggle('show', !ok); }
+    return ok;
+  }
+  document.querySelectorAll('.js-num-input').forEach(function (input) {
+    sync(input);
+    input.addEventListener('input', function () { sync(input); validate(input); });
+    input.addEventListener('blur', function () { validate(input); });
+    input.addEventListener('focus', function () {
+      var label = input.closest('.js-profile-label');
+      if (label) { label.querySelector('input[type=radio]').checked = true; }
+    });
+  });
+})();
+</script>
+
+            EOT
+          }
         }
         extraEnv = {
           OAUTH_TLS_VERIFY = "0"
@@ -165,27 +269,25 @@ locals {
           {
             display_name = "Configure seu Ambiente"
             slug         = "jupyter-environment"
-            description  = "Defina quantos recursos de CPU, memória e GPUs o seu servidor Jupyter pode usar"
+            description  = "Informe a quantidade de vCPU, memória (GB) e GPUs do seu servidor Jupyter"
             default      = true
             profile_options = {
-              # Both options keep one predefined choice plus an enabled
-              # unlisted_choice. A choice is mandatory: the profile form
-              # template iterates option["choices"], and an option with only
-              # unlisted_choice raises UndefinedError when rendering.
+              # One number input per resource, rendered by the custom
+              # form.html shipped through hub.extraFiles. Each field posts
+              # profile-option-{slug}--{option}--unlisted-choice, so the value
+              # the user types is checked against validation_regex and
+              # substituted into {value}.
               #
-              # The overrides intentionally write to extra_resource_limits /
-              # extra_resource_guarantees instead of cpu_limit / mem_limit:
-              # unlisted_choice substitutes {value} as a *string*, and cpu_limit
-              # is a traitlets Float, so "2" raises TraitError. The
-              # extra_resource_* traits are Dicts and accept strings verbatim.
-              # They are merged into the container limits after cpu_limit /
-              # mem_limit are applied, so they take effect.
+              # Every option keeps one `choices` entry as the default. Without
+              # it KubeSpawner raises "Unable to determine a default choice"
+              # when a request carries no value for the option (for example a
+              # spawn triggered through the REST API), and the custom form
+              # omits the field whenever the user leaves the default in place.
               cpu = {
-                display_name = "CPU"
+                display_name = "CPU (vCPU)"
                 choices = {
                   "1" = {
-                    display_name = "1 vCPU"
-                    default      = true
+                    default = true
                     kubespawner_override = {
                       extra_resource_limits     = { cpu = "1" }
                       extra_resource_guarantees = { cpu = "1" }
@@ -193,11 +295,10 @@ locals {
                   }
                 }
                 unlisted_choice = {
-                  enabled                 = true
-                  display_name            = "Outra quantidade de vCPU (ex.: 0.5, 2, 3.5)"
-                  display_name_in_choices = "Personalizado..."
-                  validation_regex        = "^(([1-9][0-9]*(\\.[0-9]+)?)|(0\\.[0-9]*[1-9][0-9]*))$"
-                  validation_message      = "Informe um número positivo de vCPU, por exemplo 0.5, 1, 2 ou 3.5"
+                  enabled            = true
+                  display_name       = "vCPU"
+                  validation_regex   = "^([0-9]+([.][0-9]+)?|[.][0-9]+)$"
+                  validation_message = "Informe um número positivo de vCPU, por exemplo 0.5, 1 ou 2.5"
                   kubespawner_override = {
                     extra_resource_limits     = { cpu = "{value}" }
                     extra_resource_guarantees = { cpu = "{value}" }
@@ -207,21 +308,19 @@ locals {
               memory = {
                 display_name = "Memória (GB)"
                 choices = {
-                  "2" = {
-                    display_name = "2 GB"
-                    default      = true
+                  "1" = {
+                    default = true
                     kubespawner_override = {
-                      extra_resource_limits     = { memory = "2G" }
-                      extra_resource_guarantees = { memory = "2G" }
+                      extra_resource_limits     = { memory = "1G" }
+                      extra_resource_guarantees = { memory = "1G" }
                     }
                   }
                 }
                 unlisted_choice = {
-                  enabled                 = true
-                  display_name            = "Outra quantidade de memória em GB (ex.: 4, 8, 16)"
-                  display_name_in_choices = "Personalizado..."
-                  validation_regex        = "^[1-9][0-9]*$"
-                  validation_message      = "Informe um número inteiro de GB maior que zero, por exemplo 2, 4, 8 ou 16"
+                  enabled            = true
+                  display_name       = "GB"
+                  validation_regex   = "^[1-9][0-9]*$"
+                  validation_message = "Informe um número inteiro de GB maior que zero, por exemplo 2, 4 ou 8"
                   kubespawner_override = {
                     extra_resource_limits     = { memory = "{value}G" }
                     extra_resource_guarantees = { memory = "{value}G" }
@@ -229,24 +328,14 @@ locals {
                 }
               }
               gpu = {
-                display_name = "GPU"
+                display_name = "GPUs (0 = sem GPU)"
                 choices = {
-                  # "Sem GPU" is the default so the profile works on clusters without
-                  # the NVIDIA device plugin (e.g. kind). The GPU choices request
-                  # the nvidia.com/gpu extended resource and, when
-                  # var.gpu_scheduling is set, also carry the nodeSelector and
-                  # tolerations that GPU nodes usually require. Without them a
-                  # pod requesting the extended resource on a tainted GPU node
-                  # stays Pending, which surfaces the misconfiguration instead
-                  # of silently landing on a CPU-only node.
+                  # 0 GPUs is the default so the module works on clusters
+                  # without the NVIDIA device plugin (e.g. kind). "none"
+                  # removes the nvidia.com/gpu request instead of sending 0,
+                  # which Kubernetes rejects for extended resources.
                   none = {
-                    display_name = "Sem GPU"
-                    default      = true
-                    # `None` inside a dict removes that key (recursive_update
-                    # deletes keys whose new value is None), while an empty
-                    # dict is a no-op. `node_selector` and `tolerations` are
-                    # traits that reject a bare `null`, so the GPU label key
-                    # is removed with None and the list is reset with [].
+                    default = true
                     kubespawner_override = {
                       extra_resource_limits     = { "nvidia.com/gpu" = null }
                       extra_resource_guarantees = { "nvidia.com/gpu" = null }
@@ -254,33 +343,12 @@ locals {
                       tolerations               = []
                     }
                   }
-                  "1" = {
-                    display_name = "1 GPU"
-                    kubespawner_override = merge(
-                      {
-                        extra_resource_limits     = { "nvidia.com/gpu" = "1" }
-                        extra_resource_guarantees = { "nvidia.com/gpu" = "1" }
-                      },
-                      local.gpu_overrides
-                    )
-                  }
-                  "2" = {
-                    display_name = "2 GPUs"
-                    kubespawner_override = merge(
-                      {
-                        extra_resource_limits     = { "nvidia.com/gpu" = "2" }
-                        extra_resource_guarantees = { "nvidia.com/gpu" = "2" }
-                      },
-                      local.gpu_overrides
-                    )
-                  }
                 }
                 unlisted_choice = {
-                  enabled                 = true
-                  display_name            = "Outra quantidade de GPUs (ex.: 4, 8)"
-                  display_name_in_choices = "Personalizado..."
-                  validation_regex        = "^[1-9][0-9]*$"
-                  validation_message      = "Informe um número inteiro de GPUs maior que zero, por exemplo 1, 2, 4 ou 8"
+                  enabled            = true
+                  display_name       = "GPUs"
+                  validation_regex   = "^[1-9][0-9]*$"
+                  validation_message = "Informe 1 ou 2 GPUs; deixe 0 para nenhuma"
                   kubespawner_override = merge(
                     {
                       extra_resource_limits     = { "nvidia.com/gpu" = "{value}" }

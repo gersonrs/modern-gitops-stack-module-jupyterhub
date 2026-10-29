@@ -814,7 +814,7 @@ object({
 |[[input_target_revision]] <<input_target_revision,target_revision>>
 |Override of target revision of the application chart.
 |`string`
-|`"v1.3.0"`
+|`"v1.5.0"`
 |no
 
 |===

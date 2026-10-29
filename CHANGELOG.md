@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.4.0...v1.5.0) (2026-10-29)
+
+
+### 🚀 New Features
+
+* replace the spawner dropdowns with three numeric inputs (CPU, memory in GB and GPUs), so the user types the amount instead of picking a predefined choice. Defaults are 1 vCPU, 1 GB and 0 GPUs (no GPU). A custom `form.html` is shipped through `hub.extraFiles` and registered with `additional_profile_form_template_paths`; the field is only submitted when it differs from the default, so KubeSpawner falls back to the declared default choice.
+
 ## [1.4.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.3.0...v1.4.0) (2026-10-29)
 
 

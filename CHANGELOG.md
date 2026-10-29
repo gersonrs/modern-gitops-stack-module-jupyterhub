@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.4.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.3.0...v1.4.0) (2026-10-29)
+
+
+### 🚀 New Features
+
+* add a GPU option to the KubeSpawner `profile_list`, so users pick CPU, memory and GPU count before the server starts (similar to the Kubeflow notebook form). "Sem GPU" is the default so the module still works on clusters without the NVIDIA device plugin, and the GPU request is removed again when the user switches back to it.
+* add the optional `gpu_scheduling` variable (`node_selector` and `tolerations`) applied only to the GPU choices, so pods can land on tainted GPU nodes instead of staying Pending.
+
+### 🔥 Bug Fixes
+
+* render the KubeSpawner spawn form instead of the templates repo `spawn.html`, which posts field names KubeSpawner ignores and hid the cpu/memory profile options.
+* keep the namespace out of Istio ambient mode by default; the ztunnel breaks the hub to proxy-api call on port 8001.
+* expose JupyterHub through an Istio HTTPRoute with `proxy.service.type: ClusterIP`, closing the plain-HTTP LoadBalancer shortcut.
+
 ## [1.3.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.2.0...v1.3.0) (2026-07-11)
 
 

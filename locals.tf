@@ -291,7 +291,7 @@ locals {
           # leaves open (it declares no hostnames, so this more specific route
           # wins on the http:80 listener). It is not set because the chart
           # vendored here only gained that key in 4.4.0, while Argo CD fetches
-          # the chart from GitHub at target_revision (v1.2.0 -> chart 4.3.2,
+          # the chart from GitHub at target_revision (v1.7.0 -> chart 4.3.2,
           # whose values schema has additionalProperties: false on
           # httpRoute.gateway). Enabling it here without publishing the bump
           # first makes the Application fail to render.

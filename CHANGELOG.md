@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.7.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.6.0...v1.7.0) (2026-10-29)
+
+
+### ⌨️ Code Refactoring
+
+* move the custom KubeSpawner form out of `locals.tf`. The HTML was inlined as a heredoc inside `hub.extraFiles`, which duplicated content owned by the `jupyterhub-templates` repository and made the form impossible to edit without a module release. The `git-clone-templates` initContainer now copies `templates/form.html` into a dedicated `custom-spawner-templates` volume, mounted at `/usr/local/share/jupyterhub/custom_spawner_templates`, which `additional_profile_form_template_paths` already searches before the upstream templates.
+* bump the default `target_revision` to `v1.7.0`.
+
+## [1.6.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.5.0...v1.6.0) (2026-10-29)
+
+
+### 🚀 New Features
+
+* render the GPU option as a checkbox instead of a number field. The cluster nodes expose a single GPU each, so only "with" or "without" makes sense: checking it sends the `one` choice (`nvidia.com/gpu: 1`) and leaving it unchecked sends nothing, so the default `none` applies and no GPU is requested.
+
+## [1.5.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.4.0...v1.5.0) (2026-10-29)
+
+
+### 🚀 New Features
+
+* replace the spawner dropdowns with three numeric inputs (CPU, memory in GB and GPUs), so the user types the amount instead of picking a predefined choice. Defaults are 1 vCPU, 1 GB and 0 GPUs (no GPU). A custom `form.html` is shipped through `hub.extraFiles` and registered with `additional_profile_form_template_paths`; the field is only submitted when it differs from the default, so KubeSpawner falls back to the declared default choice.
+
+## [1.4.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.3.0...v1.4.0) (2026-10-29)
+
+
+### 🚀 New Features
+
+* add a GPU option to the KubeSpawner `profile_list`, so users pick CPU, memory and GPU count before the server starts (similar to the Kubeflow notebook form). "Sem GPU" is the default so the module still works on clusters without the NVIDIA device plugin, and the GPU request is removed again when the user switches back to it.
+* add the optional `gpu_scheduling` variable (`node_selector` and `tolerations`) applied only to the GPU choices, so pods can land on tainted GPU nodes instead of staying Pending.
+
+### 🔥 Bug Fixes
+
+* render the KubeSpawner spawn form instead of the templates repo `spawn.html`, which posts field names KubeSpawner ignores and hid the cpu/memory profile options.
+* keep the namespace out of Istio ambient mode by default; the ztunnel breaks the hub to proxy-api call on port 8001.
+* expose JupyterHub through an Istio HTTPRoute with `proxy.service.type: ClusterIP`, closing the plain-HTTP LoadBalancer shortcut.
+
 ## [1.3.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.2.0...v1.3.0) (2026-07-11)
 
 

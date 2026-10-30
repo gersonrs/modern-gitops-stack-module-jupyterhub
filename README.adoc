@@ -1,6 +1,41 @@
 = modern-gitops-stack-module-jupyterhub
 // Document attributes to replace along the document
 
+A https://modern-gitops-stack.io[Modern GitOps Stack] module to deploy https://jupyter.org/hub[JupyterHub] on Kubernetes.
+
+== Spawner profiles
+
+The user pod form is driven by KubeSpawner `profile_list`, so a user picks the resources for the server before it starts (the same idea as the Kubeflow notebook form). Three options are offered:
+
+[cols="1,2,2",options="autowidth,header"]
+|===
+|Option |Choices |Notes
+|CPU |`1 vCPU` (default) plus a free-form field |Any positive number of vCPU, e.g. `0.5`, `2`, `3.5`
+|Memory |`2 GB` (default) plus a free-form field |Any positive integer of GB, e.g. `4`, `8`, `16`
+|GPU |`Sem GPU` (default), `1 GPU`, `2 GPUs` plus a free-form field |Requests the `nvidia.com/gpu` extended resource
+|===
+
+The GPU choices only request the extended resource. Clusters that advertise `nvidia.com/gpu` normally taint those nodes, so set `gpu_scheduling` with the `node_selector` and `tolerations` your GPU nodes require; the module applies them to the GPU choices only, never to the CPU-only ones.
+
+[source,hcl]
+----
+module "jupyterhub" {
+  # ...
+  gpu_scheduling = {
+    node_selector = { "nvidia.com/gpu.present" = "true" }
+    tolerations = [
+      {
+        key      = "nvidia.com/gpu"
+        operator = "Exists"
+        effect   = "NoSchedule"
+      },
+    ]
+  }
+}
+----
+
+NOTE: `Sem GPU` is the default so the module works on clusters without the NVIDIA device plugin (such as kind). Selecting a GPU on such a cluster leaves the pod `Pending` until the plugin and a GPU node exist — that is intentional, because it surfaces the missing capacity instead of silently starting a CPU-only server.
+
 // BEGIN_TF_DOCS
 === Requirements
 
@@ -187,13 +222,23 @@ Description: Labels to apply to the destination namespace managed by Argo CD (re
 
 Type: `map(string)`
 
-Default:
-[source,json]
-----
-{
-  "istio.io/dataplane-mode": "ambient"
-}
-----
+Default: `{}`
+
+==== [[input_gateway_name]] <<input_gateway_name,gateway_name>>
+
+Description: Name of the Istio Gateway resource to attach the JupyterHub HTTPRoute to.
+
+Type: `string`
+
+Default: `"istio-gateway"`
+
+==== [[input_gateway_namespace]] <<input_gateway_namespace,gateway_namespace>>
+
+Description: Namespace where the Istio Gateway resource is deployed.
+
+Type: `string`
+
+Default: `"istio-ingress"`
 
 ==== [[input_oidc]] <<input_oidc,oidc>>
 
@@ -404,15 +449,19 @@ object({
 |[[input_namespace_labels]] <<input_namespace_labels,namespace_labels>>
 |Labels to apply to the destination namespace managed by Argo CD (requires CreateNamespace=true).
 |`map(string)`
-|
+|`{}`
+|no
 
-[source]
-----
-{
-  "istio.io/dataplane-mode": "ambient"
-}
-----
+|[[input_gateway_name]] <<input_gateway_name,gateway_name>>
+|Name of the Istio Gateway resource to attach the JupyterHub HTTPRoute to.
+|`string`
+|`"istio-gateway"`
+|no
 
+|[[input_gateway_namespace]] <<input_gateway_namespace,gateway_namespace>>
+|Namespace where the Istio Gateway resource is deployed.
+|`string`
+|`"istio-ingress"`
 |no
 
 |[[input_oidc]] <<input_oidc,oidc>>
@@ -511,3 +560,273 @@ object({
 |===
 // END_TF_TABLES
 ====
+
+<!-- BEGIN_TF_DOCS -->
+== Requirements
+
+[cols="a,a",options="header,autowidth"]
+|===
+|Name |Version
+|[[requirement_argocd]] <<requirement_argocd,argocd>> |>= 6
+|[[requirement_null]] <<requirement_null,null>> |>= 3
+|[[requirement_utils]] <<requirement_utils,utils>> |>= 1
+|===
+
+== Providers
+
+[cols="a,a",options="header,autowidth"]
+|===
+|Name |Version
+|[[provider_argocd]] <<provider_argocd,argocd>> |>= 6
+|[[provider_kubernetes]] <<provider_kubernetes,kubernetes>> |n/a
+|[[provider_null]] <<provider_null,null>> |>= 3
+|[[provider_utils]] <<provider_utils,utils>> |>= 1
+|===
+
+== Modules
+
+No modules.
+
+== Resources
+
+[cols="a,a",options="header,autowidth"]
+|===
+|Name |Type
+|https://registry.terraform.io/providers/argoproj-labs/argocd/latest/docs/resources/application[argocd_application.this] |resource
+|https://registry.terraform.io/providers/argoproj-labs/argocd/latest/docs/resources/project[argocd_project.this] |resource
+|https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource[null_resource.dependencies] |resource
+|https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource[null_resource.this] |resource
+|https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/data-sources/service[kubernetes_service.jupyterhub] |data source
+|https://registry.terraform.io/providers/cloudposse/utils/latest/docs/data-sources/deep_merge_yaml[utils_deep_merge_yaml.values] |data source
+|===
+
+== Inputs
+
+[cols="a,a,a,a,a",options="header,autowidth"]
+|===
+|Name |Description |Type |Default |Required
+|[[input_app_autosync]] <<input_app_autosync,app_autosync>>
+|Automated sync options for the Argo CD Application resource.
+|
+
+[source]
+----
+object({
+    allow_empty = optional(bool)
+    prune       = optional(bool)
+    self_heal   = optional(bool)
+  })
+----
+
+|
+
+[source]
+----
+{
+  "allow_empty": false,
+  "prune": true,
+  "self_heal": true
+}
+----
+
+|no
+
+|[[input_argocd_labels]] <<input_argocd_labels,argocd_labels>>
+|Labels to attach to the Argo CD Application resource.
+|`map(string)`
+|`{}`
+|no
+
+|[[input_argocd_project]] <<input_argocd_project,argocd_project>>
+|Name of the Argo CD AppProject where the Application should be created. If not set, the Application will be created in a new AppProject only for this Application.
+|`string`
+|`null`
+|no
+
+|[[input_base_domain]] <<input_base_domain,base_domain>>
+|Base domain of the cluster. Value used for the ingress' URL of the application.
+|`string`
+|n/a
+|yes
+
+|[[input_cluster_issuer]] <<input_cluster_issuer,cluster_issuer>>
+|SSL certificate issuer to use. Usually you would configure this value as `letsencrypt-staging` or `letsencrypt-prod` on your root `*.tf` files.
+|`string`
+|`"selfsigned-issuer"`
+|no
+
+|[[input_cluster_name]] <<input_cluster_name,cluster_name>>
+|Name given to the cluster. Value used for naming some the resources created by the module.
+|`string`
+|n/a
+|yes
+
+|[[input_database]] <<input_database,database>>
+|database configuration
+|
+
+[source]
+----
+object({
+    user     = string
+    password = string
+    database = string
+    endpoint = string
+  })
+----
+
+|n/a
+|yes
+
+|[[input_dependency_ids]] <<input_dependency_ids,dependency_ids>>
+|IDs of the other modules on which this module depends on.
+|`map(string)`
+|`{}`
+|no
+
+|[[input_destination_cluster]] <<input_destination_cluster,destination_cluster>>
+|Destination cluster where the application should be deployed.
+|`string`
+|`"in-cluster"`
+|no
+
+|[[input_enable_service_monitor]] <<input_enable_service_monitor,enable_service_monitor>>
+|Enable Prometheus ServiceMonitor in the Helm chart.
+|`bool`
+|`true`
+|no
+
+|[[input_gateway_name]] <<input_gateway_name,gateway_name>>
+|Name of the Istio Gateway resource to attach the JupyterHub HTTPRoute to.
+|`string`
+|`"istio-gateway"`
+|no
+
+|[[input_gateway_namespace]] <<input_gateway_namespace,gateway_namespace>>
+|Namespace where the Istio Gateway resource is deployed.
+|`string`
+|`"istio-ingress"`
+|no
+
+|[[input_gpu_scheduling]] <<input_gpu_scheduling,gpu_scheduling>>
+|Scheduling constraints applied to user pods when a GPU is requested. Clusters that expose `nvidia.com/gpu` usually taint the GPU nodes, so a pod requesting the extended resource stays Pending until it tolerates the taint and, when a node advertises a GPU label, selects those nodes. Both values are only applied to the GPU profile choices, never to the CPU-only ones.
+|
+
+[source]
+----
+object({
+    node_selector = optional(map(string), {})
+    tolerations = optional(list(object({
+      key      = optional(string)
+      operator = optional(string)
+      value    = optional(string)
+      effect   = optional(string)
+    })), [])
+  })
+----
+
+|`null`
+|no
+
+|[[input_helm_values]] <<input_helm_values,helm_values>>
+|Helm chart value overrides. They should be passed as a list of HCL structures.
+|`any`
+|`[]`
+|no
+
+|[[input_mlflow]] <<input_mlflow,mlflow>>
+|mlflow configuration
+|
+
+[source]
+----
+object({
+    endpoint = string
+  })
+----
+
+|`null`
+|no
+
+|[[input_namespace_labels]] <<input_namespace_labels,namespace_labels>>
+|Labels to apply to the destination namespace managed by Argo CD (requires CreateNamespace=true).
+|`map(string)`
+|`{}`
+|no
+
+|[[input_oidc]] <<input_oidc,oidc>>
+|OIDC configuration to access the MinIO web interface.
+|
+
+[source]
+----
+object({
+    issuer_url              = string
+    oauth_url               = string
+    token_url               = string
+    api_url                 = string
+    client_id               = string
+    client_secret           = string
+    oauth2_proxy_extra_args = optional(list(string), [])
+  })
+----
+
+|`null`
+|no
+
+|[[input_ray]] <<input_ray,ray>>
+|kuberay configuration
+|
+
+[source]
+----
+object({
+    endpoint = string
+  })
+----
+
+|`null`
+|no
+
+|[[input_storage]] <<input_storage,storage>>
+|MinIO S3 bucket configuration values for the bucket where the archived metrics will be stored.
+|
+
+[source]
+----
+object({
+    bucket_name       = string
+    endpoint          = string
+    access_key        = string
+    secret_access_key = string
+  })
+----
+
+|n/a
+|yes
+
+|[[input_subdomain]] <<input_subdomain,subdomain>>
+|Subdomain of the cluster. Value used for the ingress' URL of the application.
+|`string`
+|`"apps"`
+|no
+
+|[[input_target_revision]] <<input_target_revision,target_revision>>
+|Override of target revision of the application chart.
+|`string`
+|`"v1.5.0"`
+|no
+
+|===
+
+== Outputs
+
+[cols="a,a",options="header,autowidth"]
+|===
+|Name |Description
+|[[output_cluster_dns]] <<output_cluster_dns,cluster_dns>> |Jupyterhub cluster dns
+|[[output_cluster_ip]] <<output_cluster_ip,cluster_ip>> |Jupyterhub cluster ip internal
+|[[output_endpoint]] <<output_endpoint,endpoint>> |Jupyterhub endpoint external
+|[[output_id]] <<output_id,id>> |ID to pass other modules in order to refer to this module as a dependency.
+|===
+<!-- END_TF_DOCS -->

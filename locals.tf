@@ -1,11 +1,40 @@
 locals {
   domain = format("jupyterhub.%s", trimprefix("${var.subdomain}.${var.base_domain}", "."))
 
+  # Scheduling constraints for user pods that request a GPU. Applied only to the
+  # GPU profile choices: a cluster that advertises nvidia.com/gpu almost always
+  # taints those nodes, so without the toleration (and, when the node carries a
+  # GPU label, the selector) the pod stays Pending forever.
+  #
+  # The keys are omitted entirely when gpu_scheduling is unset: `node_selector`
+  # and `tolerations` are traits that reject a bare `null` with TraitError.
+  gpu_overrides = var.gpu_scheduling == null ? {} : merge(
+    length(var.gpu_scheduling.node_selector) > 0 ? { node_selector = var.gpu_scheduling.node_selector } : {},
+    length(var.gpu_scheduling.tolerations) > 0 ? { tolerations = var.gpu_scheduling.tolerations } : {}
+  )
+
+  # `None` removes the key from the KubeSpawner trait dictionary. An empty dict
+  # does NOT: _apply_overrides merges dicts with recursive_update, which only
+  # deletes a key when the incoming value is None. Option overrides are applied
+  # linearly (cpu -> memory -> gpu), so an empty dict would keep a GPU request
+  # coming from a previously applied option.
+
   helm_values = [{
     jupyterhub = {
       proxy = {
+        # TLS is terminated at the Istio Gateway (listener "https" of
+        # istio-gateway), so the proxy only serves plain HTTP. The chart's
+        # own HTTPS support (letsencrypt/manual/secret) is not used.
         https = {
-          enabled = true
+          enabled = false
+        }
+        service = {
+          # The chart defaults to a LoadBalancer, which on kind/MetalLB hands
+          # proxy-public an external IP serving plain HTTP on port 80 — a path
+          # to the hub that bypasses the gateway and its TLS. The HTTPRoute
+          # below reaches proxy-public inside the cluster, so ClusterIP is
+          # enough and closes that shortcut.
+          type = "ClusterIP"
         }
       }
       hub = {
@@ -19,8 +48,18 @@ locals {
               runAsNonRoot = true
             }
             command = ["/bin/sh", "-c"]
+            # The upstream templates repo ships a custom spawn.html whose cards
+            # post the fields of the profile list this module used to declare
+            # ("profile--jupyter-environment--resources" / "--image"), and it
+            # hides the kubespawner form with display:none. KubeSpawner only
+            # reads fields named "profile-option-{profile_slug}--{option}"
+            # (kubespawner/spawner.py, _options_from_form), so that page would
+            # silently drop the cpu/memory choices declared below and every
+            # server would fall back to the defaults. Dropping the file here
+            # lets the hub fall back to its own spawn.html, which renders the
+            # kubespawner form. The other customised pages are kept.
             args = [
-              "cd /tmp && git clone --branch=main https://github.com/GersonRS/jupyterhub-templates.git && cp -r jupyterhub-templates/templates/* /templates && cp -r jupyterhub-templates/extra-assets/* /extra-assets"
+              "cd /tmp && git clone --branch=main https://github.com/GersonRS/jupyterhub-templates.git && cp -r jupyterhub-templates/templates/* /templates && cp -r jupyterhub-templates/extra-assets/* /extra-assets && mkdir -p /spawner-templates && cp jupyterhub-templates/templates/form.html /spawner-templates/form.html && rm -f /templates/spawn.html"
             ]
             volumeMounts = [
               {
@@ -30,6 +69,10 @@ locals {
               {
                 name      = "custom-templates-extra-assets"
                 mountPath = "/extra-assets"
+              },
+              {
+                name      = "custom-spawner-templates"
+                mountPath = "/spawner-templates"
               }
             ]
           }
@@ -42,6 +85,10 @@ locals {
           {
             name     = "custom-templates-extra-assets"
             emptyDir = {}
+          },
+          {
+            name     = "custom-spawner-templates"
+            emptyDir = {}
           }
         ]
         extraVolumeMounts = [
@@ -52,10 +99,21 @@ locals {
           {
             name      = "custom-templates-extra-assets"
             mountPath = "/usr/local/share/jupyterhub/static/extra_assets"
+          },
+          {
+            name      = "custom-spawner-templates"
+            mountPath = "/usr/local/share/jupyterhub/custom_spawner_templates"
           }
         ]
         extraConfig = {
           templates = "c.JupyterHub.template_paths = ['/usr/local/share/jupyterhub/custom_templates/']"
+          # The three numeric spawn fields are rendered by form.html, which the
+          # git-clone-templates initContainer copies from the jupyterhub-templates
+          # repository into the custom-spawner-templates volume. KubeSpawner
+          # looks for it in additional_profile_form_template_paths before falling
+          # back to its own templates/ directory, so the dropdowns are replaced
+          # by plain number inputs.
+          profileForm = "c.KubeSpawner.additional_profile_form_template_paths = ['/usr/local/share/jupyterhub/custom_spawner_templates']"
         }
         extraEnv = {
           OAUTH_TLS_VERIFY = "0"
@@ -86,10 +144,24 @@ locals {
       debug = {
         enabled = true
       }
+      # The pre-puller DaemonSet replicates onto every node each image listed in
+      # the profile choices. The previous profile list carried four notebook
+      # images (~2.4 GB each) and was the single largest consumer of disk on the
+      # kind cluster. Keeping the flag off guards against that coming back: if
+      # someone re-adds an image to a choice, it is no longer pre-pulled on
+      # every node. With the current single image the flag is a no-op, because
+      # the image is already pulled through singleuser.image below.
+      prePuller = {
+        pullProfileListImages = false
+      }
       singleuser = {
+        # Only one image is shipped: scipy-notebook is the smallest image that
+        # still carries the full scientific Python stack (NumPy, Pandas,
+        # Scikit-learn, Matplotlib, SciPy). Profile choices only change CPU,
+        # memory and GPU count, never the image.
         image = {
-          name = "quay.io/jupyter/all-spark-notebook"
-          tag  = "latest"
+          name = "quay.io/jupyter/scipy-notebook"
+          tag  = "2026-10-28"
         }
         storage = {
           homeMountPath = "/home/jovyan/work"
@@ -112,76 +184,92 @@ locals {
           {
             display_name = "Configure seu Ambiente"
             slug         = "jupyter-environment"
-            description  = "Escolha os recursos e a imagem para seu servidor Jupyter"
+            description  = "Informe a quantidade de vCPU, memória (GB) e GPUs do seu servidor Jupyter"
             default      = true
             profile_options = {
-              resources = {
-                display_name = "Recursos do Servidor"
+              # One number input per resource, rendered by the custom
+              # form.html cloned from the jupyterhub-templates repository. Each field posts
+              # profile-option-{slug}--{option}--unlisted-choice, so the value
+              # the user types is checked against validation_regex and
+              # substituted into {value}.
+              #
+              # Every option keeps one `choices` entry as the default. Without
+              # it KubeSpawner raises "Unable to determine a default choice"
+              # when a request carries no value for the option (for example a
+              # spawn triggered through the REST API), and the custom form
+              # omits the field whenever the user leaves the default in place.
+              cpu = {
+                display_name = "CPU (vCPU)"
                 choices = {
-                  minimal = {
-                    display_name = "Minimal"
-                    description  = "Para tarefas leves e exploração de dados"
-                    default      = true
+                  "1" = {
+                    default = true
                     kubespawner_override = {
-                      cpu_guarantee = 0.5
-                      cpu_limit     = 2
-                      mem_guarantee = "2G"
-                      mem_limit     = "4G"
-                    }
-                  }
-                  standard = {
-                    display_name = "Standard"
-                    description  = "Ideal para análises e machine learning"
-                    kubespawner_override = {
-                      cpu_guarantee = 1
-                      cpu_limit     = 4
-                      mem_guarantee = "4G"
-                      mem_limit     = "16G"
-                    }
-                  }
-                  performance = {
-                    display_name = "Performance"
-                    description  = "Para modelos complexos e grandes datasets"
-                    kubespawner_override = {
-                      cpu_guarantee = 2
-                      cpu_limit     = 8
-                      mem_guarantee = "8G"
-                      mem_limit     = "32G"
+                      extra_resource_limits     = { cpu = "1" }
+                      extra_resource_guarantees = { cpu = "1" }
                     }
                   }
                 }
+                unlisted_choice = {
+                  enabled            = true
+                  display_name       = "vCPU"
+                  validation_regex   = "^([0-9]+([.][0-9]+)?|[.][0-9]+)$"
+                  validation_message = "Informe um número positivo de vCPU, por exemplo 0.5, 1 ou 2.5"
+                  kubespawner_override = {
+                    extra_resource_limits     = { cpu = "{value}" }
+                    extra_resource_guarantees = { cpu = "{value}" }
+                  }
+                }
               }
-              image = {
-                display_name = "Imagem do Container"
+              memory = {
+                display_name = "Memória (GB)"
                 choices = {
-                  datascience = {
-                    display_name = "Data Science"
-                    description  = "NumPy, Pandas, Scikit-learn, Matplotlib"
-                    default      = true
+                  "1" = {
+                    default = true
                     kubespawner_override = {
-                      image = "quay.io/jupyter/datascience-notebook:python-3.11"
+                      extra_resource_limits     = { memory = "1G" }
+                      extra_resource_guarantees = { memory = "1G" }
                     }
                   }
-                  tensorflow = {
-                    display_name = "TensorFlow"
-                    description  = "Deep Learning com TensorFlow e Keras"
+                }
+                unlisted_choice = {
+                  enabled            = true
+                  display_name       = "GB"
+                  validation_regex   = "^[1-9][0-9]*$"
+                  validation_message = "Informe um número inteiro de GB maior que zero, por exemplo 2, 4 ou 8"
+                  kubespawner_override = {
+                    extra_resource_limits     = { memory = "{value}G" }
+                    extra_resource_guarantees = { memory = "{value}G" }
+                  }
+                }
+              }
+              gpu = {
+                display_name = "GPU"
+                # Rendered as a checkbox: checked sends the "one" choice,
+                # unchecked sends nothing and the default "none" applies.
+                # There is no unlisted_choice because the cluster nodes expose
+                # a single GPU each, so only "0" or "1" makes sense here.
+                choices = {
+                  # "none" is the default so the module works on clusters
+                  # without the NVIDIA device plugin (e.g. kind). It removes
+                  # the nvidia.com/gpu request instead of sending 0, which
+                  # Kubernetes rejects for extended resources.
+                  none = {
+                    default = true
                     kubespawner_override = {
-                      image = "quay.io/jupyter/tensorflow-notebook:latest"
+                      extra_resource_limits     = { "nvidia.com/gpu" = null }
+                      extra_resource_guarantees = { "nvidia.com/gpu" = null }
+                      node_selector             = { "nvidia.com/gpu.present" = null }
+                      tolerations               = []
                     }
                   }
-                  pytorch = {
-                    display_name = "PyTorch"
-                    description  = "Deep Learning com PyTorch e Lightning"
-                    kubespawner_override = {
-                      image = "quay.io/jupyter/pytorch-notebook:latest"
-                    }
-                  }
-                  pyspark = {
-                    display_name = "PySpark"
-                    description  = "Processamento distribuído com Apache Spark"
-                    kubespawner_override = {
-                      image = "quay.io/jupyter/all-spark-notebook:spark-3.5.0"
-                    }
+                  one = {
+                    kubespawner_override = merge(
+                      {
+                        extra_resource_limits     = { "nvidia.com/gpu" = "1" }
+                        extra_resource_guarantees = { "nvidia.com/gpu" = "1" }
+                      },
+                      local.gpu_overrides
+                    )
                   }
                 }
               }
@@ -189,23 +277,25 @@ locals {
           }
         ]
       }
-      ingress = {
-        enabled = true
-        annotations = {
-          "cert-manager.io/cluster-issuer"                   = "${var.cluster_issuer}"
-          "traefik.ingress.kubernetes.io/router.entrypoints" = "websecure"
-          "traefik.ingress.kubernetes.io/router.tls"         = "true"
+      # Exposed through the Istio Gateway like every other component of the stack.
+      # The chart ships a native HTTPRoute template; TLS is terminated at the
+      # gateway, so no cert-manager annotation is needed here.
+      httpRoute = {
+        enabled   = true
+        hostnames = [local.domain]
+        gateway = {
+          name      = var.gateway_name
+          namespace = var.gateway_namespace
+          # sectionName = "https" would pin the route to the TLS listener only,
+          # closing the plain-HTTP path that the gateway's own redirect route
+          # leaves open (it declares no hostnames, so this more specific route
+          # wins on the http:80 listener). It is not set because the chart
+          # vendored here only gained that key in 4.4.0, while Argo CD fetches
+          # the chart from GitHub at target_revision (v1.7.0 -> chart 4.3.2,
+          # whose values schema has additionalProperties: false on
+          # httpRoute.gateway). Enabling it here without publishing the bump
+          # first makes the Application fail to render.
         }
-        ingressClassName = "traefik"
-        hosts = [
-          local.domain
-        ]
-        tls = [{
-          secretName = "jupyterhub-ingres-tls"
-          hosts = [
-            local.domain
-          ]
-        }]
       }
       cull = {
         every   = 300

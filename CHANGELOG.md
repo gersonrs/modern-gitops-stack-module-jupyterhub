@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.6.0...v1.7.0) (2026-10-29)
+
+
+### ⌨️ Code Refactoring
+
+* move the custom KubeSpawner form out of `locals.tf`. The HTML was inlined as a heredoc inside `hub.extraFiles`, which duplicated content owned by the `jupyterhub-templates` repository and made the form impossible to edit without a module release. The `git-clone-templates` initContainer now copies `templates/form.html` into a dedicated `custom-spawner-templates` volume, mounted at `/usr/local/share/jupyterhub/custom_spawner_templates`, which `additional_profile_form_template_paths` already searches before the upstream templates.
+* bump the default `target_revision` to `v1.7.0`.
+
 ## [1.6.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.5.0...v1.6.0) (2026-10-29)
 
 

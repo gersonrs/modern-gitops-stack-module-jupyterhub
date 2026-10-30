@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.7.1](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.7.0...v1.7.1) (2026-10-30)
+
+
+### ⚙️ Chores
+
+* bump target revision to v1.7.0 ([5ed876a](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/5ed876ac0e2e01d4f34c0fd23e898d2826a3bd29))
+* release 1.7.0 ([f354c5d](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/f354c5d8a2b5924c930d0577b5d17046aeb558dc))
+* release 1.7.0 ([69d20ba](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/69d20ba0b9beaea6d934a9a67af94cc33420787c))
+
 ## [1.7.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.6.0...v1.7.0) (2026-10-29)
 
 

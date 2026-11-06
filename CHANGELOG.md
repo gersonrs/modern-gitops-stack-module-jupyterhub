@@ -1,9 +1,22 @@
 # Changelog
 
-## [1.8.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.7.0...v1.8.0) (2026-11-06)
+## [1.9.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.7.0...v1.9.0) (2026-11-06)
 
 
 ### 🚀 New Features
+
+* per-group GCP credentials in the spawn form. Setting `user_groups` makes the hub fetch the member's Compass/Luigi groups after login, offer them in the form, and start the notebook with the selected group's service account key read from Secret Manager. The hub holds the only credential able to read those keys, so a notebook only ever sees the key of the group its user selected.
+* derive the Secret Manager secret name from the group slug and project (`AUTOMATION_SERVICE_ACCOUNT_JSONKEY_<GROUP_UPPER>_<PROJECT_UPPER>`), so a group cannot point at another group's secret.
+* authenticate directly against SSO Corp. `oidc.client_secret` is optional for a public client such as `compass_mgc`, `oidc.basic_auth` and `oidc.enable_pkce` are exposed, and PKCE defaults to on.
+* `oidc.use_group_claims`, `oidc.allow_all`, `oidc.allowed_users`, `oidc.blocked_users` and `oidc.admin_users` make the login posture a choice instead of a hardcoded `true`.
+* `user_groups.email_domain` completes a bare username before the Compass lookup, because SSO Corp exposes `preferred_username` rather than an e-mail.
+
+### 🐛 Bug Fixes
+
+* set `allow_all = true` when `use_group_claims` is false. `check_allowed()` only admits a user through `allow_all`, `allowed_users`, admin status or a matching `allowed_group`, so with no groups claim every login returned 403.
+* keep `allow_all` a boolean. Merging it in the same ternary as `claim_groups_key` gave Terraform two object shapes, which it unified into `map(string)` and coerced `true` to `"true"`; oauthenticator then raised `TraitError` at startup.
+* demote a user removed from `oidc.admin_users`. `is_admin()` returns `None`, not `False`, and `auth_to_user` only writes `admin` when the value is not `None`, so a promoted user stayed admin forever.
+* document the prerequisites the module does not create: the group secrets, the `roles/secretmanager.secretAccessor` bindings, and the Kubernetes Secret holding the hub key as `key.json`.
 
 * add custom JupyterHub templates and profile_options ([97039b6](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/97039b6ba64a205f8f977a4bbfd74ab9f4b460cb))
 * add GPU option to the JupyterHub spawner profile list ([4ddd3a1](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/4ddd3a1a6ffaf3226d5a191261b45f037bb20cac))
@@ -61,7 +74,7 @@
 * update pre-commit-hooks config file ([c3140f4](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/c3140f43dc09406ecb5ae0ac1f8922ef59d91e97))
 * update pre-commit-hooks config file ([45ee48f](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/45ee48fd4621ae76ee8f1a911dd328a9f67d57fe))
 
-## [1.8.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.7.0...v1.8.0) (2026-11-03)
+## [1.9.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.7.0...v1.9.0) (2026-11-03)
 
 
 ### 🚀 New Features

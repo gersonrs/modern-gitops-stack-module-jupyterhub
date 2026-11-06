@@ -1,5 +1,71 @@
 # Changelog
 
+## [1.9.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.8.0...v1.9.0) (2026-11-06)
+
+
+### 🚀 New Features
+
+* add custom JupyterHub templates and profile_options ([97039b6](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/97039b6ba64a205f8f977a4bbfd74ab9f4b460cb))
+* add GPU option to the JupyterHub spawner profile list ([4ddd3a1](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/4ddd3a1a6ffaf3226d5a191261b45f037bb20cac))
+* add namespace_labels variable to all modules ([f2a57cc](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/f2a57cc3f5a9d9d467777fb13d8ecb0aa60125d0))
+* add per-group GCP credentials to the spawn form ([#11](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/issues/11)) ([257eb2c](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/257eb2c5e69f134dc1664bc9300a7025f79dc7b5))
+* adjust module ([170a768](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/170a768a0bdd674d1140b0ad49cbbb857acdee39))
+* adjust workflow ([9b870c8](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/9b870c8bd1e4d3afa502cd175b27e274eb3ec73e))
+* render the GPU option as a checkbox ([7af5ad8](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/7af5ad8395b35fcbc8b3a76c670c353df60ce63e))
+* test elyra ([62461e3](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/62461e3a13cb56f6a3bbad4f7e83fb64b6702ee4))
+* use numeric inputs in the JupyterHub spawner form ([01f0f78](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/01f0f78c42311614c7646edb95fcd5b34efca178))
+
+
+### 🔥 Bug Fixes
+
+* adjust oauthentication ([c6eb382](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/c6eb3829da48cb091231ac6c99e541ab68192a7f))
+* adjust oauthentication ([5a3bf5d](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/5a3bf5d91dac139bcab4ac32279876a818263380))
+* adjust output ([05ae117](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/05ae117b61f64eaafe88935ddbf1857b8ba4b4cb))
+* adjust output ([32f83fc](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/32f83fc079a6d82d9aca7e1e7eb286056710e7c4))
+* adjust output ([40ee5f1](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/40ee5f177f5e8a31cbabf8a1ea3cb358d2b1a401))
+
+
+### 📚 Documentation
+
+* **terraform-docs:** generate docs and write to README.adoc ([ee0b45e](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/ee0b45e4718e8fc67fc1e0c2996b25a0f55d60a8))
+* **terraform-docs:** generate docs and write to README.adoc ([f99f194](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/f99f1941bff93f06e2fdc052d6fef9a3d953e5cd))
+* **terraform-docs:** generate docs and write to README.adoc ([2c74d90](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/2c74d9040c1135eae2ba6d63151640adba856fc0))
+* **terraform-docs:** gerar docs e escrever no README.adoc ([bc11723](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/bc1172333d4c18cfa9a1eedb98017e5ecd0f2919))
+* **terraform-docs:** gerar docs e escrever no README.adoc ([e044708](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/e044708a37e28ce47fd8b308afad5c8e18603910))
+* **terraform-docs:** gerar docs e escrever no README.adoc ([185b5d8](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/185b5d84d1acdf369ccd329684202a90076485ae))
+* **terraform-docs:** gerar docs e escrever no README.adoc ([1eb42c4](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/1eb42c4a7c8ab5505c0906a664ae7af438c61b6f))
+
+
+### ⚙️ Chores
+
+* bump target revision to v1.7.0 ([5ed876a](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/5ed876ac0e2e01d4f34c0fd23e898d2826a3bd29))
+* release 1.1.0 ([747d6d9](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/747d6d9ebe58a20a0988919f76a10779bdafaef2))
+* release 1.1.0 ([7e1a40d](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/7e1a40d2b66e7abec11e7c47fd625e24869dcb8f))
+* release 1.1.1 ([ed95947](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/ed959478d0456e5b227036993eac76c425660ba9))
+* release 1.1.1 ([41243e6](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/41243e64876ea50cf6b45f47d2589f54b61c3fb6))
+* release 1.1.2 ([c261422](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/c26142297f61d1a7e656aebccc7c9273b3855a1c))
+* release 1.1.2 ([57b6898](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/57b689822c29a26cc5fd16f11c160661e0867031))
+* release 1.2.0 ([96bcc0e](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/96bcc0e71eb6cae8b6f7a690b0dfc1e49df83173))
+* release 1.2.0 ([ba1cddb](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/ba1cddb30a4d67bc7d929e17b2361b000c077b4c))
+* release 1.3.0 ([c844e31](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/c844e3196f9661b0d2ab558419ecb71bf3ad5164))
+* release 1.3.0 ([0866ea6](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/0866ea6c0ac27306ff72e4389279ca6f42592113))
+* release 1.7.0 ([f354c5d](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/f354c5d8a2b5924c930d0577b5d17046aeb558dc))
+* release 1.7.0 ([69d20ba](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/69d20ba0b9beaea6d934a9a67af94cc33420787c))
+* release 1.8.0 ([52037bf](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/52037bff18a17f8a0b5a368a2df8952ed979a5f3))
+* release 1.8.0 ([ac43947](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/ac439477dbe8a46df8db7006fccaf83f3e60449e))
+* release 1.9.0 ([de8ac03](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/de8ac0356d029bcd3f21d6f62878d9780b7528f9))
+* release 1.9.0 ([a641d5e](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/a641d5ed259c22dead17c2def2d4173c99bea034))
+
+
+### ⌨️ Code Refactoring
+
+* adjust workflows ([1d996de](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/1d996de1484f7023d6302bf83217d0333528beb7))
+* adjust workflows ([6695fa0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/6695fa0e310b3523f38979f19f98aa30f8bf804e))
+* load spawner form from jupyterhub-templates repo ([2ddd42c](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/2ddd42cf137a1b011a8c4f9addf03cb6f182dabd))
+* try adjust code 5 ([d2480d6](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/d2480d62bd7bd177bd8339c22d67f65109ad8dd3))
+* update pre-commit-hooks config file ([c3140f4](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/c3140f43dc09406ecb5ae0ac1f8922ef59d91e97))
+* update pre-commit-hooks config file ([45ee48f](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/45ee48fd4621ae76ee8f1a911dd328a9f67d57fe))
+
 ## [1.8.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.7.0...v1.8.0) (2026-11-06)
 
 

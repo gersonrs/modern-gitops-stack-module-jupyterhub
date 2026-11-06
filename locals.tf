@@ -329,82 +329,25 @@ locals {
         }
       }
       hub = {
-        initContainers = [
-          {
-            name  = "git-clone-templates"
-            image = "alpine/git"
-            securityContext = {
-              runAsUser    = 1000
-              runAsGroup   = 1000
-              runAsNonRoot = true
-            }
-            command = ["/bin/sh", "-c"]
-            # The upstream templates repo ships a custom spawn.html whose cards
-            # post the fields of the profile list this module used to declare
-            # ("profile--jupyter-environment--resources" / "--image"), and it
-            # hides the kubespawner form with display:none. KubeSpawner only
-            # reads fields named "profile-option-{profile_slug}--{option}"
-            # (kubespawner/spawner.py, _options_from_form), so that page would
-            # silently drop the cpu/memory choices declared below and every
-            # server would fall back to the defaults. Dropping the file here
-            # lets the hub fall back to its own spawn.html, which renders the
-            # kubespawner form. The other customised pages are kept.
-            args = [
-              "cd /tmp && git clone --branch=main https://github.com/GersonRS/jupyterhub-templates.git && cp -r jupyterhub-templates/templates/* /templates && cp -r jupyterhub-templates/extra-assets/* /extra-assets && mkdir -p /spawner-templates && cp jupyterhub-templates/templates/form.html /spawner-templates/form.html && rm -f /templates/spawn.html"
-            ]
-            volumeMounts = [
-              {
-                name      = "custom-templates"
-                mountPath = "/templates"
-              },
-              {
-                name      = "custom-templates-extra-assets"
-                mountPath = "/extra-assets"
-              },
-              {
-                name      = "custom-spawner-templates"
-                mountPath = "/spawner-templates"
-              }
-            ]
-          }
-        ]
-        extraVolumes = concat([
-          {
-            name     = "custom-templates"
-            emptyDir = {}
-          },
-          {
-            name     = "custom-templates-extra-assets"
-            emptyDir = {}
-          },
-          {
-            name     = "custom-spawner-templates"
-            emptyDir = {}
-          }
-        ], local.hub_credentials_volume)
+        # The templates are baked into the image (see var.hub_image), so the hub
+        # pod no longer needs an initContainer to clone them at startup. The
+        # custom pages live at /usr/local/share/jupyterhub/custom_templates and
+        # the spawner form at /usr/local/share/jupyterhub/custom_spawner_templates,
+        # both already on the default JupyterHub template search path.
+        image = var.hub_image == null ? {} : {
+          name = var.hub_image.name
+          tag  = var.hub_image.tag
+        }
+        extraVolumes = local.hub_credentials_volume
 
-        extraVolumeMounts = concat([
-          {
-            name      = "custom-templates"
-            mountPath = "/usr/local/share/jupyterhub/custom_templates"
-          },
-          {
-            name      = "custom-templates-extra-assets"
-            mountPath = "/usr/local/share/jupyterhub/static/extra_assets"
-          },
-          {
-            name      = "custom-spawner-templates"
-            mountPath = "/usr/local/share/jupyterhub/custom_spawner_templates"
-          }
-        ], local.hub_credentials_volume_mount)
+        extraVolumeMounts = local.hub_credentials_volume_mount
         extraConfig = merge({
           templates = "c.JupyterHub.template_paths = ['/usr/local/share/jupyterhub/custom_templates/']"
-          # The three numeric spawn fields are rendered by form.html, which the
-          # git-clone-templates initContainer copies from the jupyterhub-templates
-          # repository into the custom-spawner-templates volume. KubeSpawner
-          # looks for it in additional_profile_form_template_paths before falling
-          # back to its own templates/ directory, so the dropdowns are replaced
-          # by plain number inputs.
+          # The three numeric spawn fields are rendered by form.html, which is
+          # baked into the image at custom_spawner_templates/form.html.
+          # KubeSpawner looks for it in additional_profile_form_template_paths
+          # before falling back to its own templates/ directory, so the
+          # dropdowns are replaced by plain number inputs.
           profileForm = "c.KubeSpawner.additional_profile_form_template_paths = ['/usr/local/share/jupyterhub/custom_spawner_templates']"
         }, local.group_credentials_config)
         extraEnv = {

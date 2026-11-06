@@ -311,3 +311,28 @@ variable "gpu_scheduling" {
 
   default = null
 }
+
+variable "hub_image" {
+  description = <<-EOT
+    Hub container image used by the JupyterHub deployment.
+
+    The module no longer clones the templates at runtime. Instead it expects an
+    image derived from `quay.io/jupyterhub/k8s-hub` that already ships the
+    custom templates, so the hub pod starts with them in place and no
+    initContainer or shared volume is required.
+
+    The image is built by the `jupyterhub-templates` repository, which publishes
+    the tag `hub-<chart-version>` for every JupyterHub chart release. Keep `tag`
+    aligned with the chart version used by this module, because the hub image
+    and the chart are released together.
+
+    Set to `null` to fall back to the image pinned by the Helm chart.
+  EOT
+
+  type = object({
+    name = optional(string, "docker.io/gersonrs/jupyterhub-hub")
+    tag  = optional(string, "hub-4.3.2")
+  })
+
+  default = null
+}

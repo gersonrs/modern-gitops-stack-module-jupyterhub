@@ -36,6 +36,30 @@ module "jupyterhub" {
 
 NOTE: The GPU checkbox is unchecked by default so the module works on clusters without the NVIDIA device plugin (such as kind). Checking it on such a cluster leaves the pod `Pending` until the plugin and a GPU node exist — that is intentional, because it surfaces the missing capacity instead of silently starting a CPU-only server.
 
+== Hub image
+
+The hub runs a prebuilt image that already ships the spawner profiles and the custom templates, so no init container clones a repository at pod start. By default the module uses `docker.io/gersonrs/jupyterhub-hub` tagged `hub-<chart-version>`, which is the upstream `quay.io/jupyterhub/k8s-hub` release plus the contents of the https://github.com/GersonRS/jupyterhub-templates[jupyterhub-templates] repository baked in.
+
+Baking the templates into the image buys three things over the init-container approach:
+
+* **No network dependency at startup.** The pod no longer clones a Git repository, so a GitHub outage or a rate limit cannot leave the hub serving the stock templates.
+* **Immutable templates.** The files are root-owned and read-only inside the image, so a compromised notebook server cannot rewrite the form every user sees.
+* **Faster and more predictable rollouts.** The image is pulled like any other, cached by the node, and pinned by digest by the same mechanism as the rest of the chart.
+
+The image tag must match the chart version, because the hub image and the chart are released together and a mismatch can break the hub. Bump `hub_image.tag` whenever `helm_values` moves to a new chart release, and set the whole object to override the registry, the repository, or a private mirror:
+
+[source,hcl]
+----
+module "jupyterhub" {
+  # ... unchanged
+
+  hub_image = {
+    name = "registry.example.com/ml/jupyterhub-hub"
+    tag  = "hub-4.3.2"
+  }
+}
+----
+
 == Per-group GCP credentials
 
 When the notebooks must read per-group BigQuery datasets and data-lake tables, set `user_groups`. The form then gains a group selector and the notebook starts with the credential of the selected group.
@@ -371,6 +395,21 @@ object({
       value    = optional(string)
       effect   = optional(string)
     })), [])
+  })
+----
+
+Default: `null`
+
+==== [[input_hub_image]] <<input_hub_image,hub_image>>
+
+Description: Hub image that already contains the spawner profiles and the custom templates. Defaults to `docker.io/gersonrs/jupyterhub-hub` tagged `hub-<chart-version>`, which is the upstream `quay.io/jupyterhub/k8s-hub` release with the templates baked in, so the hub does not need an init container to clone them at startup. The tag must match the chart version because the hub image and the chart are released together. Set the whole object to point at a private registry or a mirror.
+
+Type:
+[source,hcl]
+----
+object({
+    name = optional(string, "docker.io/gersonrs/jupyterhub-hub")
+    tag  = optional(string, "hub-4.3.2")
   })
 ----
 
@@ -752,6 +791,15 @@ object({
 |`null`
 |no
 
+|[[input_hub_image]] <<input_hub_image,hub_image>>
+|Hub image that already contains the spawner profiles and the custom templates. Defaults to `docker.io/gersonrs/jupyterhub-hub` tagged `hub-<chart-version>`, which is the upstream `quay.io/jupyterhub/k8s-hub` release with the templates baked in, so the hub does not need an init container to clone them at startup. The tag must match the chart version because the hub image and the chart are released together. Set the whole object to point at a private registry or a mirror.
+|`object({
+    name = optional(string, "docker.io/gersonrs/jupyterhub-hub")
+    tag  = optional(string, "hub-4.3.2")
+  })`
+|`null`
+|no
+
 |[[input_helm_values]] <<input_helm_values,helm_values>>
 |Helm chart value overrides. They should be passed as a list of HCL structures.
 |`any`
@@ -1010,6 +1058,7 @@ No modules.
 | <a name="input_gateway_name"></a> [gateway\_name](#input\_gateway\_name) | Name of the Istio Gateway resource to attach the JupyterHub HTTPRoute to. | `string` | `"istio-gateway"` | no |
 | <a name="input_gateway_namespace"></a> [gateway\_namespace](#input\_gateway\_namespace) | Namespace where the Istio Gateway resource is deployed. | `string` | `"istio-ingress"` | no |
 | <a name="input_gpu_scheduling"></a> [gpu\_scheduling](#input\_gpu\_scheduling) | Scheduling constraints applied to user pods when a GPU is requested. Clusters that expose `nvidia.com/gpu` usually taint the GPU nodes, so a pod requesting the extended resource stays Pending until it tolerates the taint and, when a node advertises a GPU label, selects those nodes. Both values are only applied to the GPU profile choices, never to the CPU-only ones. | <pre>object({<br/>    node_selector = optional(map(string), {})<br/>    tolerations = optional(list(object({<br/>      key      = optional(string)<br/>      operator = optional(string)<br/>      value    = optional(string)<br/>      effect   = optional(string)<br/>    })), [])<br/>  })</pre> | `null` | no |
+| <a name="input_hub_image"></a> [hub\_image](#input\_hub\_image) | Hub image that already contains the spawner profiles and the custom templates. Defaults to `docker.io/gersonrs/jupyterhub-hub` tagged `hub-<chart-version>`, which is the upstream `quay.io/jupyterhub/k8s-hub` release with the templates baked in, so the hub does not need an init container to clone them at startup. The tag must match the chart version because the hub image and the chart are released together. Set the whole object to point at a private registry or a mirror. | <pre>object({<br/>    name = optional(string, "docker.io/gersonrs/jupyterhub-hub")<br/>    tag  = optional(string, "hub-4.3.2")<br/>  })</pre> | `null` | no |
 | <a name="input_helm_values"></a> [helm\_values](#input\_helm\_values) | Helm chart value overrides. They should be passed as a list of HCL structures. | `any` | `[]` | no |
 | <a name="input_mlflow"></a> [mlflow](#input\_mlflow) | mlflow configuration | <pre>object({<br/>    endpoint = string<br/>  })</pre> | `null` | no |
 | <a name="input_namespace_labels"></a> [namespace\_labels](#input\_namespace\_labels) | Labels to apply to the destination namespace managed by Argo CD (requires CreateNamespace=true). | `map(string)` | `{}` | no |

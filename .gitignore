@@ -20,6 +20,14 @@ crash.*.log
 *.tfvars
 *.tfvars.json
 
+# GCP service account keys must never be committed. Any file that carries a
+# private_key is a long-lived credential: once pushed it has to be rotated.
+SA.json
+*sa.json
+*service-account*.json
+gcp-key*.json
+key.json
+
 # Ignore override files as they are usually used to override resources locally and so
 # are not checked in
 override.tf

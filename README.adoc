@@ -9,13 +9,13 @@ The user pod form is driven by KubeSpawner `profile_list`, so a user picks the r
 
 [cols="1,2,2",options="autowidth,header"]
 |===
-|Option |Choices |Notes
-|CPU |`1 vCPU` (default) plus a free-form field |Any positive number of vCPU, e.g. `0.5`, `2`, `3.5`
-|Memory |`2 GB` (default) plus a free-form field |Any positive integer of GB, e.g. `4`, `8`, `16`
-|GPU |`Sem GPU` (default), `1 GPU`, `2 GPUs` plus a free-form field |Requests the `nvidia.com/gpu` extended resource
+|Option |Input |Notes
+|CPU |Number field, default `1` |Any positive number of vCPU, e.g. `0.5`, `2`, `3.5`
+|Memory |Number field, default `1` |Any positive integer of GB, e.g. `4`, `8`, `16`
+|GPU |Checkbox, unchecked by default |Requests exactly one `nvidia.com/gpu`; the cluster nodes expose a single GPU each
 |===
 
-The GPU choices only request the extended resource. Clusters that advertise `nvidia.com/gpu` normally taint those nodes, so set `gpu_scheduling` with the `node_selector` and `tolerations` your GPU nodes require; the module applies them to the GPU choices only, never to the CPU-only ones.
+The GPU checkbox only requests the extended resource. Clusters that advertise `nvidia.com/gpu` normally taint those nodes, so set `gpu_scheduling` with the `node_selector` and `tolerations` your GPU nodes require; the module applies them to the GPU choices only, never to the CPU-only ones.
 
 [source,hcl]
 ----
@@ -34,7 +34,151 @@ module "jupyterhub" {
 }
 ----
 
-NOTE: `Sem GPU` is the default so the module works on clusters without the NVIDIA device plugin (such as kind). Selecting a GPU on such a cluster leaves the pod `Pending` until the plugin and a GPU node exist — that is intentional, because it surfaces the missing capacity instead of silently starting a CPU-only server.
+NOTE: The GPU checkbox is unchecked by default so the module works on clusters without the NVIDIA device plugin (such as kind). Checking it on such a cluster leaves the pod `Pending` until the plugin and a GPU node exist — that is intentional, because it surfaces the missing capacity instead of silently starting a CPU-only server.
+
+== Per-group GCP credentials
+
+When the notebooks must read per-group BigQuery datasets and data-lake tables, set `user_groups`. The form then gains a group selector and the notebook starts with the credential of the selected group.
+
+=== Prerequisites
+
+These exist outside the module and must be in place **before** applying it:
+
+[cols="1,3",options="autowidth,header"]
+|===
+|Item |Detail
+|Group keys in Secret Manager |One secret per group, named `AUTOMATION_SERVICE_ACCOUNT_JSONKEY_<GROUP_UPPER>_<PROJECT_UPPER>`. The module derives that name from the map key and `project`, so the spelling has to match exactly.
+|Reader service account |A GCP service account allowed to read those secrets, with `roles/secretmanager.secretAccessor` granted **on each group secret**, plus `roles/secretmanager.viewer` if you want the version listing to work.
+|Its key in Kubernetes |A Secret in the JupyterHub namespace holding that key under the name `key.json`. The module mounts it into the hub only.
+|===
+
+The module does not create any of these. It has no `kubernetes_secret` and no GCP credential resource, on purpose: a key committed to Terraform state or to git is a long-lived credential that has to be rotated by hand.
+
+[source,bash]
+----
+# The hub needs read access to every group secret it may serve.
+for secret in AUTOMATION_SERVICE_ACCOUNT_JSONKEY_GROUP-ANALYTICS-CLIENTES_MAGA-BIGDATA \
+              AUTOMATION_SERVICE_ACCOUNT_JSONKEY_GROUP-ANALYTICS-FRAUDE_MAGA-BIGDATA; do
+  gcloud secrets add-iam-policy-binding "$secret" \
+    --project=maga-bigdata \
+    --member="serviceAccount:compass-one-vm@maga-bigdata.iam.gserviceaccount.com" \
+    --role=roles/secretmanager.secretAccessor
+done
+
+# The key must be mounted as key.json.
+kubectl create secret generic jupyterhub-hub-gcp \
+  --namespace jupyterhub \
+  --from-file=key.json=./SA.json
+----
+
+=== Configuration
+
+[source,hcl]
+----
+module "jupyterhub" {
+  # ...
+  user_groups = {
+    api_url             = "https://luigi-compass.luizalabs.com/groups/member"
+    hub_key_secret_name = "jupyterhub-hub-gcp"
+    groups = {
+      group-analytics-clientes = { project = "maga-bigdata" }
+      group-analytics-fraude   = { project = "maga-bigdata" }
+    }
+  }
+}
+----
+
+=== How it works
+
+. After login, `Authenticator.post_auth_hook` reads the member e-mail from the OIDC userinfo response and asks the Compass/Luigi API which groups that member belongs to. The result is cached in `auth_state`, because the API answers in several seconds and the form is rendered after login but before the pod exists.
+. `KubeSpawner.profile_list` is replaced by a callable that adds a `group` option listing only the intersection of the member's groups and the configured `groups`.
+. `options_from_form` re-validates the submitted group. KubeSpawner does not check a predefined choice at all, so an unchecked value would otherwise reach `_load_profile` and raise `KeyError`.
+. `KubeSpawner.pre_spawn_hook` reads the group's JSON key from Secret Manager, writes it to a Secret owned by the hub, mounts it read-only and sets `GOOGLE_APPLICATION_CREDENTIALS`. `post_stop_hook` deletes the Secret when the server stops.
+
+The notebook needs no entrypoint: `google-cloud-bigquery`, `google-cloud-storage`, `pandas-gbq` and `gcloud` all read `GOOGLE_APPLICATION_CREDENTIALS` through Application Default Credentials.
+
+[cols="1,2",options="autowidth,header"]
+|===
+|Credential |Scope
+|`hub_key_secret_name` |Reads the per-group keys from Secret Manager. Mounted only in the hub, never in user pods
+|Per-group key |Reads the group's data. Mounted only in the pod of the member who selected that group
+|===
+
+This keeps the blast radius of a compromised notebook to the single group it selected, and lets you revoke access by disabling the Secret Manager version instead of rotating keys across every group.
+
+NOTE: `user_groups` requires `c.Authenticator.enable_auth_state`, which the module enables automatically. The chart already generates `CryptKeeper.keys` from the hub Secret, so no extra key material is needed.
+
+=== Identity providers without a groups claim
+
+SSO Corp returns no groups claim, so leave `use_group_claims = false`. The hub then admits any authenticated employee (`allow_all`) and authorization comes from the group credential instead of a claim. Keep `admin_users` populated so somebody can reach the admin panel.
+
+With an in-cluster Keycloak (the kind example), keep the default `use_group_claims = true` together with `allowed_groups` and `admin_groups`.
+
+== Logging in directly with SSO Corp
+
+The hub can authenticate against SSO Corp without the in-cluster Keycloak in front of it. That removes one federation hop and one token exchange from every login.
+
+[source,hcl]
+----
+oidc = {
+  oauth_url = "https://sso-corp.luizalabs.com/realms/corp/protocol/openid-connect/auth"
+  token_url = "https://sso-corp.luizalabs.com/realms/corp/protocol/openid-connect/token"
+  api_url   = "https://sso-corp.luizalabs.com/realms/corp/protocol/openid-connect/userinfo"
+
+  client_id     = "compass_mgc"
+  client_secret = ""          # public client: SSO Corp registers it without a secret
+
+  use_group_claims = false
+  allowed_groups   = []
+  admin_groups     = []
+  admin_users      = ["santos.gerson"]
+}
+----
+
+Requirements checked against the realm:
+
+[cols="1,1,2",options="autowidth,header"]
+|===
+|Setting |Value |Why
+|Client type |Public (`client_secret = ""`) |`compass_mgc` has no secret. Keycloak answers `invalid_grant` rather than `invalid_client` for an empty secret, so the exchange works.
+|PKCE |`enable_pkce = true` (default) |Mandatory for a public client: with no secret it is the only proof that the code exchange comes from the same party that started the login. The realm advertises `S256`.
+|Redirect URI |`https://<hub>/hub/oauth_callback` |Must be registered on the client. The `compass_mgc` registration accepts it.
+|Scopes |`openid email` |`groups` is dropped because `use_group_claims = false`.
+|===
+
+The login form, the `email` scope and `admin_users` all rely on SSO Corp returning `preferred_username`. When the `email` scope is granted the e-mail claim is used directly; otherwise the username is completed with `user_groups.email_domain` before the Compass lookup, because that API is keyed by e-mail.
+
+WARNING: `oidc.issuer_url` and `oidc.oauth2_proxy_extra_args` are accepted for compatibility with the object the keycloak `oidc_bootstrap` module returns, but `GenericOAuthenticator` never reads them. Pointing `oidc` at SSO Corp does not remove the in-cluster Keycloak; stop passing `oidc = module.oidc.oidc` if you want it gone from the login path.
+
+=== Who can log in
+
+With no groups claim there is nothing for `check_allowed()` to match, so the decision falls back to `allow_all`, which defaults to `true`. **That admits every identity SSO Corp authenticates — every Magalu employee.** Pick the posture you want:
+
+[cols="1,1,1,2",options="autowidth,header"]
+|===
+|Posture |allow_all |allowed_users |Effect
+|Open to the company |`true` |— |Any employee logs in. Simplest, and the default.
+|Explicit allow list |`false` |list of usernames |Only the listed users log in; everyone else gets 403.
+|Open, with exceptions |`true` |— plus `blocked_users` |Everyone except the deny list.
+|===
+
+[source,hcl]
+----
+# Explicit allow list: only these two people may use the hub.
+oidc = {
+  # ...
+  use_group_claims = false
+  allow_all        = false
+  allowed_users    = ["santos.gerson", "maria.silva"]
+  admin_users      = ["santos.gerson"]
+}
+----
+
+Usernames are compared after normalization (lowercase), so list them in lowercase. `blocked_users` is evaluated before `allow_all`, which makes it the way to revoke one person without switching the hub to an allow list. `allowed_users` is not auto-extended with existing users: `allow_existing_users` stays `false`, so removing somebody from the list does lock them out.
+
+NOTE: removing a name from `admin_users` takes effect on that user's next login. `Authenticator.is_admin()` returns `None` rather than `False` for a user outside the list, and `auth_to_user` only writes `admin` when the value is not `None`, so a promoted user would otherwise stay an admin forever. When `user_groups` is enabled, the module's `post_auth_hook` returns an explicit `False` and the user is demoted on the next login. Without `user_groups` there is no hook, so uncheck "admin" for that user once in the hub admin panel (Admin -> Users).
+
+CAUTION: a positive allow list is the only posture where the group selector is enforced twice. With `allow_all = true` any employee can log in, but they still only reach the data of a group the Compass API says they belong to, because `pre_options_from_form` and `pre_spawn_hook` both re-check the submitted group against `auth_state`.
 
 // BEGIN_TF_DOCS
 === Requirements
@@ -53,11 +197,15 @@ The following providers are used by this module:
 
 - [[provider_argocd]] <<provider_argocd,argocd>> (>= 6)
 
-- [[provider_utils]] <<provider_utils,utils>> (>= 1)
+- [[provider_kubernetes]] <<provider_kubernetes,kubernetes>>
 
 - [[provider_null]] <<provider_null,null>> (>= 3)
 
-- [[provider_kubernetes]] <<provider_kubernetes,kubernetes>>
+- [[provider_utils]] <<provider_utils,utils>> (>= 1)
+
+=== Modules
+
+No modules.
 
 === Resources
 
@@ -74,32 +222,17 @@ The following resources are used by this module:
 
 The following input variables are required:
 
-==== [[input_cluster_name]] <<input_cluster_name,cluster_name>>
-
-Description: Name given to the cluster. Value used for naming some the resources created by the module.
-
-Type: `string`
-
 ==== [[input_base_domain]] <<input_base_domain,base_domain>>
 
 Description: Base domain of the cluster. Value used for the ingress' URL of the application.
 
 Type: `string`
 
-==== [[input_storage]] <<input_storage,storage>>
+==== [[input_cluster_name]] <<input_cluster_name,cluster_name>>
 
-Description: MinIO S3 bucket configuration values for the bucket where the archived metrics will be stored.
+Description: Name given to the cluster. Value used for naming some the resources created by the module.
 
-Type:
-[source,hcl]
-----
-object({
-    bucket_name       = string
-    endpoint          = string
-    access_key        = string
-    secret_access_key = string
-  })
-----
+Type: `string`
 
 ==== [[input_database]] <<input_database,database>>
 
@@ -116,73 +249,24 @@ object({
   })
 ----
 
+==== [[input_storage]] <<input_storage,storage>>
+
+Description: MinIO S3 bucket configuration values for the bucket where the archived metrics will be stored.
+
+Type:
+[source,hcl]
+----
+object({
+    bucket_name       = string
+    endpoint          = string
+    access_key        = string
+    secret_access_key = string
+  })
+----
+
 === Optional Inputs
 
 The following input variables are optional (have default values):
-
-==== [[input_subdomain]] <<input_subdomain,subdomain>>
-
-Description: Subdomain of the cluster. Value used for the ingress' URL of the application.
-
-Type: `string`
-
-Default: `"apps"`
-
-==== [[input_argocd_project]] <<input_argocd_project,argocd_project>>
-
-Description: Name of the Argo CD AppProject where the Application should be created. If not set, the Application will be created in a new AppProject only for this Application.
-
-Type: `string`
-
-Default: `null`
-
-==== [[input_argocd_labels]] <<input_argocd_labels,argocd_labels>>
-
-Description: Labels to attach to the Argo CD Application resource.
-
-Type: `map(string)`
-
-Default: `{}`
-
-==== [[input_destination_cluster]] <<input_destination_cluster,destination_cluster>>
-
-Description: Destination cluster where the application should be deployed.
-
-Type: `string`
-
-Default: `"in-cluster"`
-
-==== [[input_target_revision]] <<input_target_revision,target_revision>>
-
-Description: Override of target revision of the application chart.
-
-Type: `string`
-
-Default: `"v1.3.0"`
-
-==== [[input_cluster_issuer]] <<input_cluster_issuer,cluster_issuer>>
-
-Description: SSL certificate issuer to use. Usually you would configure this value as `letsencrypt-staging` or `letsencrypt-prod` on your root `*.tf` files.
-
-Type: `string`
-
-Default: `"selfsigned-issuer"`
-
-==== [[input_enable_service_monitor]] <<input_enable_service_monitor,enable_service_monitor>>
-
-Description: Enable Prometheus ServiceMonitor in the Helm chart.
-
-Type: `bool`
-
-Default: `true`
-
-==== [[input_helm_values]] <<input_helm_values,helm_values>>
-
-Description: Helm chart value overrides. They should be passed as a list of HCL structures.
-
-Type: `any`
-
-Default: `[]`
 
 ==== [[input_app_autosync]] <<input_app_autosync,app_autosync>>
 
@@ -208,6 +292,30 @@ Default:
 }
 ----
 
+==== [[input_argocd_labels]] <<input_argocd_labels,argocd_labels>>
+
+Description: Labels to attach to the Argo CD Application resource.
+
+Type: `map(string)`
+
+Default: `{}`
+
+==== [[input_argocd_project]] <<input_argocd_project,argocd_project>>
+
+Description: Name of the Argo CD AppProject where the Application should be created. If not set, the Application will be created in a new AppProject only for this Application.
+
+Type: `string`
+
+Default: `null`
+
+==== [[input_cluster_issuer]] <<input_cluster_issuer,cluster_issuer>>
+
+Description: SSL certificate issuer to use. Usually you would configure this value as `letsencrypt-staging` or `letsencrypt-prod` on your root `*.tf` files.
+
+Type: `string`
+
+Default: `"selfsigned-issuer"`
+
 ==== [[input_dependency_ids]] <<input_dependency_ids,dependency_ids>>
 
 Description: IDs of the other modules on which this module depends on.
@@ -216,13 +324,21 @@ Type: `map(string)`
 
 Default: `{}`
 
-==== [[input_namespace_labels]] <<input_namespace_labels,namespace_labels>>
+==== [[input_destination_cluster]] <<input_destination_cluster,destination_cluster>>
 
-Description: Labels to apply to the destination namespace managed by Argo CD (requires CreateNamespace=true).
+Description: Destination cluster where the application should be deployed.
 
-Type: `map(string)`
+Type: `string`
 
-Default: `{}`
+Default: `"in-cluster"`
+
+==== [[input_enable_service_monitor]] <<input_enable_service_monitor,enable_service_monitor>>
+
+Description: Enable Prometheus ServiceMonitor in the Helm chart.
+
+Type: `bool`
+
+Default: `true`
 
 ==== [[input_gateway_name]] <<input_gateway_name,gateway_name>>
 
@@ -240,25 +356,33 @@ Type: `string`
 
 Default: `"istio-ingress"`
 
-==== [[input_oidc]] <<input_oidc,oidc>>
+==== [[input_gpu_scheduling]] <<input_gpu_scheduling,gpu_scheduling>>
 
-Description: OIDC configuration to access the MinIO web interface.
+Description: Scheduling constraints applied to user pods when a GPU is requested. Clusters that expose `nvidia.com/gpu` usually taint the GPU nodes, so a pod requesting the extended resource stays Pending until it tolerates the taint and, when a node advertises a GPU label, selects those nodes. Both values are only applied to the GPU profile choices, never to the CPU-only ones.
 
 Type:
 [source,hcl]
 ----
 object({
-    issuer_url              = string
-    oauth_url               = string
-    token_url               = string
-    api_url                 = string
-    client_id               = string
-    client_secret           = string
-    oauth2_proxy_extra_args = optional(list(string), [])
+    node_selector = optional(map(string), {})
+    tolerations = optional(list(object({
+      key      = optional(string)
+      operator = optional(string)
+      value    = optional(string)
+      effect   = optional(string)
+    })), [])
   })
 ----
 
 Default: `null`
+
+==== [[input_helm_values]] <<input_helm_values,helm_values>>
+
+Description: Helm chart value overrides. They should be passed as a list of HCL structures.
+
+Type: `any`
+
+Default: `[]`
 
 ==== [[input_mlflow]] <<input_mlflow,mlflow>>
 
@@ -269,6 +393,84 @@ Type:
 ----
 object({
     endpoint = string
+  })
+----
+
+Default: `null`
+
+==== [[input_namespace_labels]] <<input_namespace_labels,namespace_labels>>
+
+Description: Labels to apply to the destination namespace managed by Argo CD (requires CreateNamespace=true).
+
+Type: `map(string)`
+
+Default: `{}`
+
+==== [[input_oidc]] <<input_oidc,oidc>>
+
+Description: OIDC configuration for the hub login.
+
+Type:
+[source,hcl]
+----
+object({
+    oauth_url = string
+    token_url = string
+    api_url   = string
+    client_id = string
+    # Empty for a public OIDC client. SSO Corp registers `compass_mgc` without a
+    # secret, and Keycloak accepts an empty client_secret on the token endpoint
+    # for such clients, so leaving this empty is supported rather than a typo.
+    client_secret = optional(string, "")
+
+    # Send the client credentials in the Authorization header instead of the
+    # request body. Only needed for providers that reject body credentials.
+    basic_auth = optional(bool, false)
+
+    # Proof Key for Code Exchange. On by default, matching oauthenticator, and
+    # required for a public client because there is no secret to prove the
+    # token exchange came from the same party that started the login.
+    enable_pkce = optional(bool, true)
+
+    # Accepted for compatibility with the object the keycloak oidc_bootstrap
+    # module returns. GenericOAuthenticator never reads an issuer URL, so the
+    # value is ignored; keeping it avoids forcing callers to reshape the object.
+    issuer_url              = optional(string, "")
+    oauth2_proxy_extra_args = optional(list(string), [])
+
+    # Group-based authorization reads a claim from the userinfo response. Set
+    # use_group_claims = false when the identity provider does not emit a groups
+    # claim at all (SSO Corp only returns the member e-mail): the hub would
+    # otherwise see an empty group list and reject every login, because
+    # allowed_groups never matches. With false the hub admits any authenticated
+    # employee and authorization is enforced per group by the notebook
+    # credential instead. A null claim_groups_key cannot express this, because
+    # an optional() default replaces null with the default value.
+    use_group_claims = optional(bool, true)
+    claim_groups_key = optional(string, "groups")
+    allowed_groups   = optional(list(string), ["user", "modern-gitops-stack-admins"])
+    admin_groups     = optional(list(string), ["modern-gitops-stack-admins"])
+    manage_groups    = optional(bool, true)
+
+    # Usernames granted hub admin rights. Needed when admin_groups cannot be
+    # used because the provider emits no group claim.
+    admin_users = optional(list(string), [])
+
+    # Who may log in when use_group_claims is false. There is no group claim to
+    # match, so the provider alone cannot tell an employee from anyone else:
+    # allow_all = true admits every identity the provider authenticates, which
+    # for SSO Corp means every Magalu employee. Set it to false and fill
+    # allowed_users to restrict the hub to an explicit list; check_allowed()
+    # then answers 403 instead of admitting the user.
+    allow_all = optional(bool, true)
+
+    # Explicit allow list, only consulted when allow_all is false. Usernames are
+    # matched after normalization (lowercase), so list them in lowercase.
+    allowed_users = optional(list(string), [])
+
+    # Deny list, evaluated before allow_all. Use it to revoke one person without
+    # switching the hub to an allow list.
+    blocked_users = optional(list(string), [])
   })
 ----
 
@@ -288,13 +490,78 @@ object({
 
 Default: `null`
 
+==== [[input_subdomain]] <<input_subdomain,subdomain>>
+
+Description: Subdomain of the cluster. Value used for the ingress' URL of the application.
+
+Type: `string`
+
+Default: `"apps"`
+
+==== [[input_target_revision]] <<input_target_revision,target_revision>>
+
+Description: Override of target revision of the application chart.
+
+Type: `string`
+
+Default: `"v1.7.0"`
+
+==== [[input_user_groups]] <<input_user_groups,user_groups>>
+
+Description: Per-group GCP credentials for the notebook servers, resolved at spawn time.
+
+When set, the spawn form gains a group selector listing the groups the  
+authenticated member belongs to, and the notebook starts with that group's  
+GCP service account key. When null the feature is disabled and the form  
+shows only the CPU, memory and GPU fields.
+
+`api_url` is the Compass/Luigi endpoint that returns the groups of a member.  
+The module appends the URL-encoded e-mail of the authenticated user, so the  
+value must be the path prefix, for example
+`https://luigi-compass.luizalabs.com/groups/member`.
+
+`groups` maps each group slug, exactly as that API returns it, to the GCP  
+project that owns the group service account. The Secret Manager secret is  
+derived from both values with the naming convention already used by the  
+platform:
+
+    AUTOMATION_SERVICE_ACCOUNT_JSONKEY_<GROUP_UPPER>_<PROJECT_UPPER>
+
+so a `group-analytics-fraude` group in `maga-bigdata` reads
+`AUTOMATION_SERVICE_ACCOUNT_JSONKEY_GROUP-ANALYTICS-FRAUDE_MAGA-BIGDATA`.  
+Deriving the name instead of accepting it keeps the map small and makes a  
+typo in one group impossible to hide.
+
+`hub_key_secret_name` is the name of a Kubernetes Secret, in the JupyterHub  
+namespace, holding the key of the service account that can read those  
+Secret Manager secrets. The module mounts it into the hub only, never into a  
+notebook, so a compromised notebook can reach the single group it selected  
+and nothing else. The Secret must exist before the module is applied and  
+must use the key `key.json`.
+
+Type:
+[source,hcl]
+----
+object({
+    api_url             = string
+    api_timeout_seconds = optional(number, 20)
+    hub_key_secret_name = string
+    groups = map(object({
+      project = string
+    }))
+    # Appended to a bare username when the identity provider returns neither an
+    # e-mail claim nor a username that already looks like an address. SSO Corp
+    # exposes preferred_username, which is the part before the @, so the Compass
+    # lookup would query the wrong member without this.
+    email_domain = optional(string, "luizalabs.com")
+  })
+----
+
+Default: `null`
+
 === Outputs
 
 The following outputs are exported:
-
-==== [[output_id]] <<output_id,id>>
-
-Description: ID to pass other modules in order to refer to this module as a dependency.
 
 ==== [[output_cluster_dns]] <<output_cluster_dns,cluster_dns>>
 
@@ -307,6 +574,10 @@ Description: Jupyterhub cluster ip internal
 ==== [[output_endpoint]] <<output_endpoint,endpoint>>
 
 Description: Jupyterhub endpoint external
+
+==== [[output_id]] <<output_id,id>>
+
+Description: ID to pass other modules in order to refer to this module as a dependency.
 // END_TF_DOCS
 
 === Reference in table format 
@@ -562,271 +833,71 @@ object({
 ====
 
 <!-- BEGIN_TF_DOCS -->
-== Requirements
+## Requirements
 
-[cols="a,a",options="header,autowidth"]
-|===
-|Name |Version
-|[[requirement_argocd]] <<requirement_argocd,argocd>> |>= 6
-|[[requirement_null]] <<requirement_null,null>> |>= 3
-|[[requirement_utils]] <<requirement_utils,utils>> |>= 1
-|===
+| Name | Version |
+| ---- | ------- |
+| <a name="requirement_argocd"></a> [argocd](#requirement\_argocd) | >= 6 |
+| <a name="requirement_null"></a> [null](#requirement\_null) | >= 3 |
+| <a name="requirement_utils"></a> [utils](#requirement\_utils) | >= 1 |
 
-== Providers
+## Providers
 
-[cols="a,a",options="header,autowidth"]
-|===
-|Name |Version
-|[[provider_argocd]] <<provider_argocd,argocd>> |>= 6
-|[[provider_kubernetes]] <<provider_kubernetes,kubernetes>> |n/a
-|[[provider_null]] <<provider_null,null>> |>= 3
-|[[provider_utils]] <<provider_utils,utils>> |>= 1
-|===
+| Name | Version |
+| ---- | ------- |
+| <a name="provider_argocd"></a> [argocd](#provider\_argocd) | >= 6 |
+| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | n/a |
+| <a name="provider_null"></a> [null](#provider\_null) | >= 3 |
+| <a name="provider_utils"></a> [utils](#provider\_utils) | >= 1 |
 
-== Modules
+## Modules
 
 No modules.
 
-== Resources
+## Resources
 
-[cols="a,a",options="header,autowidth"]
-|===
-|Name |Type
-|https://registry.terraform.io/providers/argoproj-labs/argocd/latest/docs/resources/application[argocd_application.this] |resource
-|https://registry.terraform.io/providers/argoproj-labs/argocd/latest/docs/resources/project[argocd_project.this] |resource
-|https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource[null_resource.dependencies] |resource
-|https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource[null_resource.this] |resource
-|https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/data-sources/service[kubernetes_service.jupyterhub] |data source
-|https://registry.terraform.io/providers/cloudposse/utils/latest/docs/data-sources/deep_merge_yaml[utils_deep_merge_yaml.values] |data source
-|===
+| Name | Type |
+| ---- | ---- |
+| [argocd_application.this](https://registry.terraform.io/providers/argoproj-labs/argocd/latest/docs/resources/application) | resource |
+| [argocd_project.this](https://registry.terraform.io/providers/argoproj-labs/argocd/latest/docs/resources/project) | resource |
+| [null_resource.dependencies](https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource) | resource |
+| [null_resource.this](https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource) | resource |
+| [kubernetes_service.jupyterhub](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/data-sources/service) | data source |
+| [utils_deep_merge_yaml.values](https://registry.terraform.io/providers/cloudposse/utils/latest/docs/data-sources/deep_merge_yaml) | data source |
 
-== Inputs
+## Inputs
 
-[cols="a,a,a,a,a",options="header,autowidth"]
-|===
-|Name |Description |Type |Default |Required
-|[[input_app_autosync]] <<input_app_autosync,app_autosync>>
-|Automated sync options for the Argo CD Application resource.
-|
+| Name | Description | Type | Default | Required |
+| ---- | ----------- | ---- | ------- | :------: |
+| <a name="input_app_autosync"></a> [app\_autosync](#input\_app\_autosync) | Automated sync options for the Argo CD Application resource. | <pre>object({<br/>    allow_empty = optional(bool)<br/>    prune       = optional(bool)<br/>    self_heal   = optional(bool)<br/>  })</pre> | <pre>{<br/>  "allow_empty": false,<br/>  "prune": true,<br/>  "self_heal": true<br/>}</pre> | no |
+| <a name="input_argocd_labels"></a> [argocd\_labels](#input\_argocd\_labels) | Labels to attach to the Argo CD Application resource. | `map(string)` | `{}` | no |
+| <a name="input_argocd_project"></a> [argocd\_project](#input\_argocd\_project) | Name of the Argo CD AppProject where the Application should be created. If not set, the Application will be created in a new AppProject only for this Application. | `string` | `null` | no |
+| <a name="input_base_domain"></a> [base\_domain](#input\_base\_domain) | Base domain of the cluster. Value used for the ingress' URL of the application. | `string` | n/a | yes |
+| <a name="input_cluster_issuer"></a> [cluster\_issuer](#input\_cluster\_issuer) | SSL certificate issuer to use. Usually you would configure this value as `letsencrypt-staging` or `letsencrypt-prod` on your root `*.tf` files. | `string` | `"selfsigned-issuer"` | no |
+| <a name="input_cluster_name"></a> [cluster\_name](#input\_cluster\_name) | Name given to the cluster. Value used for naming some the resources created by the module. | `string` | n/a | yes |
+| <a name="input_database"></a> [database](#input\_database) | database configuration | <pre>object({<br/>    user     = string<br/>    password = string<br/>    database = string<br/>    endpoint = string<br/>  })</pre> | n/a | yes |
+| <a name="input_dependency_ids"></a> [dependency\_ids](#input\_dependency\_ids) | IDs of the other modules on which this module depends on. | `map(string)` | `{}` | no |
+| <a name="input_destination_cluster"></a> [destination\_cluster](#input\_destination\_cluster) | Destination cluster where the application should be deployed. | `string` | `"in-cluster"` | no |
+| <a name="input_enable_service_monitor"></a> [enable\_service\_monitor](#input\_enable\_service\_monitor) | Enable Prometheus ServiceMonitor in the Helm chart. | `bool` | `true` | no |
+| <a name="input_gateway_name"></a> [gateway\_name](#input\_gateway\_name) | Name of the Istio Gateway resource to attach the JupyterHub HTTPRoute to. | `string` | `"istio-gateway"` | no |
+| <a name="input_gateway_namespace"></a> [gateway\_namespace](#input\_gateway\_namespace) | Namespace where the Istio Gateway resource is deployed. | `string` | `"istio-ingress"` | no |
+| <a name="input_gpu_scheduling"></a> [gpu\_scheduling](#input\_gpu\_scheduling) | Scheduling constraints applied to user pods when a GPU is requested. Clusters that expose `nvidia.com/gpu` usually taint the GPU nodes, so a pod requesting the extended resource stays Pending until it tolerates the taint and, when a node advertises a GPU label, selects those nodes. Both values are only applied to the GPU profile choices, never to the CPU-only ones. | <pre>object({<br/>    node_selector = optional(map(string), {})<br/>    tolerations = optional(list(object({<br/>      key      = optional(string)<br/>      operator = optional(string)<br/>      value    = optional(string)<br/>      effect   = optional(string)<br/>    })), [])<br/>  })</pre> | `null` | no |
+| <a name="input_helm_values"></a> [helm\_values](#input\_helm\_values) | Helm chart value overrides. They should be passed as a list of HCL structures. | `any` | `[]` | no |
+| <a name="input_mlflow"></a> [mlflow](#input\_mlflow) | mlflow configuration | <pre>object({<br/>    endpoint = string<br/>  })</pre> | `null` | no |
+| <a name="input_namespace_labels"></a> [namespace\_labels](#input\_namespace\_labels) | Labels to apply to the destination namespace managed by Argo CD (requires CreateNamespace=true). | `map(string)` | `{}` | no |
+| <a name="input_oidc"></a> [oidc](#input\_oidc) | OIDC configuration for the hub login. | <pre>object({<br/>    oauth_url = string<br/>    token_url = string<br/>    api_url   = string<br/>    client_id = string<br/>    # Empty for a public OIDC client. SSO Corp registers `compass_mgc` without a<br/>    # secret, and Keycloak accepts an empty client_secret on the token endpoint<br/>    # for such clients, so leaving this empty is supported rather than a typo.<br/>    client_secret = optional(string, "")<br/><br/>    # Send the client credentials in the Authorization header instead of the<br/>    # request body. Only needed for providers that reject body credentials.<br/>    basic_auth = optional(bool, false)<br/><br/>    # Proof Key for Code Exchange. On by default, matching oauthenticator, and<br/>    # required for a public client because there is no secret to prove the<br/>    # token exchange came from the same party that started the login.<br/>    enable_pkce = optional(bool, true)<br/><br/>    # Accepted for compatibility with the object the keycloak oidc_bootstrap<br/>    # module returns. GenericOAuthenticator never reads an issuer URL, so the<br/>    # value is ignored; keeping it avoids forcing callers to reshape the object.<br/>    issuer_url              = optional(string, "")<br/>    oauth2_proxy_extra_args = optional(list(string), [])<br/><br/>    # Group-based authorization reads a claim from the userinfo response. Set<br/>    # use_group_claims = false when the identity provider does not emit a groups<br/>    # claim at all (SSO Corp only returns the member e-mail): the hub would<br/>    # otherwise see an empty group list and reject every login, because<br/>    # allowed_groups never matches. With false the hub admits any authenticated<br/>    # employee and authorization is enforced per group by the notebook<br/>    # credential instead. A null claim_groups_key cannot express this, because<br/>    # an optional() default replaces null with the default value.<br/>    use_group_claims = optional(bool, true)<br/>    claim_groups_key = optional(string, "groups")<br/>    allowed_groups   = optional(list(string), ["user", "modern-gitops-stack-admins"])<br/>    admin_groups     = optional(list(string), ["modern-gitops-stack-admins"])<br/>    manage_groups    = optional(bool, true)<br/><br/>    # Usernames granted hub admin rights. Needed when admin_groups cannot be<br/>    # used because the provider emits no group claim.<br/>    admin_users = optional(list(string), [])<br/><br/>    # Who may log in when use_group_claims is false. There is no group claim to<br/>    # match, so the provider alone cannot tell an employee from anyone else:<br/>    # allow_all = true admits every identity the provider authenticates, which<br/>    # for SSO Corp means every Magalu employee. Set it to false and fill<br/>    # allowed_users to restrict the hub to an explicit list; check_allowed()<br/>    # then answers 403 instead of admitting the user.<br/>    allow_all = optional(bool, true)<br/><br/>    # Explicit allow list, only consulted when allow_all is false. Usernames are<br/>    # matched after normalization (lowercase), so list them in lowercase.<br/>    allowed_users = optional(list(string), [])<br/><br/>    # Deny list, evaluated before allow_all. Use it to revoke one person without<br/>    # switching the hub to an allow list.<br/>    blocked_users = optional(list(string), [])<br/>  })</pre> | `null` | no |
+| <a name="input_ray"></a> [ray](#input\_ray) | kuberay configuration | <pre>object({<br/>    endpoint = string<br/>  })</pre> | `null` | no |
+| <a name="input_storage"></a> [storage](#input\_storage) | MinIO S3 bucket configuration values for the bucket where the archived metrics will be stored. | <pre>object({<br/>    bucket_name       = string<br/>    endpoint          = string<br/>    access_key        = string<br/>    secret_access_key = string<br/>  })</pre> | n/a | yes |
+| <a name="input_subdomain"></a> [subdomain](#input\_subdomain) | Subdomain of the cluster. Value used for the ingress' URL of the application. | `string` | `"apps"` | no |
+| <a name="input_target_revision"></a> [target\_revision](#input\_target\_revision) | Override of target revision of the application chart. | `string` | `"v1.7.0"` | no |
+| <a name="input_user_groups"></a> [user\_groups](#input\_user\_groups) | Per-group GCP credentials for the notebook servers, resolved at spawn time.<br/><br/>When set, the spawn form gains a group selector listing the groups the<br/>authenticated member belongs to, and the notebook starts with that group's<br/>GCP service account key. When null the feature is disabled and the form<br/>shows only the CPU, memory and GPU fields.<br/><br/>`api_url` is the Compass/Luigi endpoint that returns the groups of a member.<br/>The module appends the URL-encoded e-mail of the authenticated user, so the<br/>value must be the path prefix, for example<br/>`https://luigi-compass.luizalabs.com/groups/member`.<br/><br/>`groups` maps each group slug, exactly as that API returns it, to the GCP<br/>project that owns the group service account. The Secret Manager secret is<br/>derived from both values with the naming convention already used by the<br/>platform:<br/><br/>    AUTOMATION\_SERVICE\_ACCOUNT\_JSONKEY\_<GROUP\_UPPER>\_<PROJECT\_UPPER><br/><br/>so a `group-analytics-fraude` group in `maga-bigdata` reads<br/>`AUTOMATION_SERVICE_ACCOUNT_JSONKEY_GROUP-ANALYTICS-FRAUDE_MAGA-BIGDATA`.<br/>Deriving the name instead of accepting it keeps the map small and makes a<br/>typo in one group impossible to hide.<br/><br/>`hub_key_secret_name` is the name of a Kubernetes Secret, in the JupyterHub<br/>namespace, holding the key of the service account that can read those<br/>Secret Manager secrets. The module mounts it into the hub only, never into a<br/>notebook, so a compromised notebook can reach the single group it selected<br/>and nothing else. The Secret must exist before the module is applied and<br/>must use the key `key.json`. | <pre>object({<br/>    api_url             = string<br/>    api_timeout_seconds = optional(number, 20)<br/>    hub_key_secret_name = string<br/>    groups = map(object({<br/>      project = string<br/>    }))<br/>    # Appended to a bare username when the identity provider returns neither an<br/>    # e-mail claim nor a username that already looks like an address. SSO Corp<br/>    # exposes preferred_username, which is the part before the @, so the Compass<br/>    # lookup would query the wrong member without this.<br/>    email_domain = optional(string, "luizalabs.com")<br/>  })</pre> | `null` | no |
 
-[source]
-----
-object({
-    allow_empty = optional(bool)
-    prune       = optional(bool)
-    self_heal   = optional(bool)
-  })
-----
+## Outputs
 
-|
-
-[source]
-----
-{
-  "allow_empty": false,
-  "prune": true,
-  "self_heal": true
-}
-----
-
-|no
-
-|[[input_argocd_labels]] <<input_argocd_labels,argocd_labels>>
-|Labels to attach to the Argo CD Application resource.
-|`map(string)`
-|`{}`
-|no
-
-|[[input_argocd_project]] <<input_argocd_project,argocd_project>>
-|Name of the Argo CD AppProject where the Application should be created. If not set, the Application will be created in a new AppProject only for this Application.
-|`string`
-|`null`
-|no
-
-|[[input_base_domain]] <<input_base_domain,base_domain>>
-|Base domain of the cluster. Value used for the ingress' URL of the application.
-|`string`
-|n/a
-|yes
-
-|[[input_cluster_issuer]] <<input_cluster_issuer,cluster_issuer>>
-|SSL certificate issuer to use. Usually you would configure this value as `letsencrypt-staging` or `letsencrypt-prod` on your root `*.tf` files.
-|`string`
-|`"selfsigned-issuer"`
-|no
-
-|[[input_cluster_name]] <<input_cluster_name,cluster_name>>
-|Name given to the cluster. Value used for naming some the resources created by the module.
-|`string`
-|n/a
-|yes
-
-|[[input_database]] <<input_database,database>>
-|database configuration
-|
-
-[source]
-----
-object({
-    user     = string
-    password = string
-    database = string
-    endpoint = string
-  })
-----
-
-|n/a
-|yes
-
-|[[input_dependency_ids]] <<input_dependency_ids,dependency_ids>>
-|IDs of the other modules on which this module depends on.
-|`map(string)`
-|`{}`
-|no
-
-|[[input_destination_cluster]] <<input_destination_cluster,destination_cluster>>
-|Destination cluster where the application should be deployed.
-|`string`
-|`"in-cluster"`
-|no
-
-|[[input_enable_service_monitor]] <<input_enable_service_monitor,enable_service_monitor>>
-|Enable Prometheus ServiceMonitor in the Helm chart.
-|`bool`
-|`true`
-|no
-
-|[[input_gateway_name]] <<input_gateway_name,gateway_name>>
-|Name of the Istio Gateway resource to attach the JupyterHub HTTPRoute to.
-|`string`
-|`"istio-gateway"`
-|no
-
-|[[input_gateway_namespace]] <<input_gateway_namespace,gateway_namespace>>
-|Namespace where the Istio Gateway resource is deployed.
-|`string`
-|`"istio-ingress"`
-|no
-
-|[[input_gpu_scheduling]] <<input_gpu_scheduling,gpu_scheduling>>
-|Scheduling constraints applied to user pods when a GPU is requested. Clusters that expose `nvidia.com/gpu` usually taint the GPU nodes, so a pod requesting the extended resource stays Pending until it tolerates the taint and, when a node advertises a GPU label, selects those nodes. Both values are only applied to the GPU profile choices, never to the CPU-only ones.
-|
-
-[source]
-----
-object({
-    node_selector = optional(map(string), {})
-    tolerations = optional(list(object({
-      key      = optional(string)
-      operator = optional(string)
-      value    = optional(string)
-      effect   = optional(string)
-    })), [])
-  })
-----
-
-|`null`
-|no
-
-|[[input_helm_values]] <<input_helm_values,helm_values>>
-|Helm chart value overrides. They should be passed as a list of HCL structures.
-|`any`
-|`[]`
-|no
-
-|[[input_mlflow]] <<input_mlflow,mlflow>>
-|mlflow configuration
-|
-
-[source]
-----
-object({
-    endpoint = string
-  })
-----
-
-|`null`
-|no
-
-|[[input_namespace_labels]] <<input_namespace_labels,namespace_labels>>
-|Labels to apply to the destination namespace managed by Argo CD (requires CreateNamespace=true).
-|`map(string)`
-|`{}`
-|no
-
-|[[input_oidc]] <<input_oidc,oidc>>
-|OIDC configuration to access the MinIO web interface.
-|
-
-[source]
-----
-object({
-    issuer_url              = string
-    oauth_url               = string
-    token_url               = string
-    api_url                 = string
-    client_id               = string
-    client_secret           = string
-    oauth2_proxy_extra_args = optional(list(string), [])
-  })
-----
-
-|`null`
-|no
-
-|[[input_ray]] <<input_ray,ray>>
-|kuberay configuration
-|
-
-[source]
-----
-object({
-    endpoint = string
-  })
-----
-
-|`null`
-|no
-
-|[[input_storage]] <<input_storage,storage>>
-|MinIO S3 bucket configuration values for the bucket where the archived metrics will be stored.
-|
-
-[source]
-----
-object({
-    bucket_name       = string
-    endpoint          = string
-    access_key        = string
-    secret_access_key = string
-  })
-----
-
-|n/a
-|yes
-
-|[[input_subdomain]] <<input_subdomain,subdomain>>
-|Subdomain of the cluster. Value used for the ingress' URL of the application.
-|`string`
-|`"apps"`
-|no
-
-|[[input_target_revision]] <<input_target_revision,target_revision>>
-|Override of target revision of the application chart.
-|`string`
-|`"v1.5.0"`
-|no
-
-|===
-
-== Outputs
-
-[cols="a,a",options="header,autowidth"]
-|===
-|Name |Description
-|[[output_cluster_dns]] <<output_cluster_dns,cluster_dns>> |Jupyterhub cluster dns
-|[[output_cluster_ip]] <<output_cluster_ip,cluster_ip>> |Jupyterhub cluster ip internal
-|[[output_endpoint]] <<output_endpoint,endpoint>> |Jupyterhub endpoint external
-|[[output_id]] <<output_id,id>> |ID to pass other modules in order to refer to this module as a dependency.
-|===
+| Name | Description |
+| ---- | ----------- |
+| <a name="output_cluster_dns"></a> [cluster\_dns](#output\_cluster\_dns) | Jupyterhub cluster dns |
+| <a name="output_cluster_ip"></a> [cluster\_ip](#output\_cluster\_ip) | Jupyterhub cluster ip internal |
+| <a name="output_endpoint"></a> [endpoint](#output\_endpoint) | Jupyterhub endpoint external |
+| <a name="output_id"></a> [id](#output\_id) | ID to pass other modules in order to refer to this module as a dependency. |
 <!-- END_TF_DOCS -->

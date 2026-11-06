@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.8.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.7.0...v1.8.0) (2026-11-03)
+
+
+### 🚀 New Features
+
+* expose `oidc.allow_all`, `oidc.allowed_users` and `oidc.blocked_users`. With `use_group_claims = false` the hub has no group claim to authorize against, so `allow_all` decided every login and the module hardcoded it to `true` — meaning any identity the provider authenticates, which for SSO Corp is every Magalu employee. The default still matches the previous behaviour, but the posture is now a choice, and a validation rejects the one combination that cannot work (`allow_all = false` with no `allowed_users`), which would otherwise 403 every login.
+* support authenticating directly against SSO Corp, without the in-cluster Keycloak federating it. `oidc.client_secret` is now optional so a public client such as `compass_mgc` works, and `oidc.basic_auth` / `oidc.enable_pkce` are exposed. PKCE defaults to on, which a public client needs because there is no secret to bind the code exchange to the login that started it.
+* complete a bare username with `user_groups.email_domain` before the Compass lookup. SSO Corp exposes `preferred_username`, not an e-mail, and the Compass API is keyed by e-mail: without this the lookup queried a non-existent member and returned an empty group list, which the form reported as "no group with data access".
+* add per-group GCP credentials to the spawn form. Setting `user_groups` makes the hub fetch the member's Compass/Luigi groups after login, offer them in the form, and start the notebook with the selected group's service account key read from Secret Manager. The hub holds the only credential able to read those keys, so a notebook only ever sees the key of the group its user selected.
+* derive the Secret Manager secret name from the group slug and project (`AUTOMATION_SERVICE_ACCOUNT_JSONKEY_<GROUP_UPPER>_<PROJECT_UPPER>`), matching the convention the platform already uses. The map only carries `project`, so a group cannot silently point at another group's secret.
+* add `oidc.use_group_claims` and `oidc.admin_users`. SSO Corp emits no groups claim, so `allowed_groups` never matched and every login was rejected with 403. With `use_group_claims = false` the hub admits any authenticated employee and authorization comes from the group credential; `admin_users` grants the admin panel without a group claim. The defaults reproduce the previous behaviour exactly.
+
+### 🐛 Bug Fixes
+
+* set `allow_all = true` when `use_group_claims` is false. `check_allowed()` in oauthenticator only admits a user through `allow_all`, `allowed_users`, admin status or a matching `allowed_group`, so with no groups claim every employee got 403 on the OAuth callback. It is merged in its own argument because combining it with the `claim_groups_key` branch gave the ternary two object shapes, which Terraform unified into `map(string)` and coerced the boolean to the string `"true"` — oauthenticator then raises `TraitError` on startup.
+* demote a user removed from `oidc.admin_users`. `Authenticator.is_admin()` returns `None`, not `False`, for a user outside the list, and `auth_to_user` only writes `admin` when the value is not `None` — so once promoted, a user kept the admin menu forever. The `post_auth_hook` now returns an explicit `False` when the user is not listed, while leaving a `True` set by `admin_groups` untouched.
+* document the prerequisites the module does not create: the group secrets, the `roles/secretmanager.secretAccessor` bindings, and the Kubernetes Secret holding the hub key as `key.json`.
+
 ## [1.7.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.6.0...v1.7.0) (2026-10-29)
 
 

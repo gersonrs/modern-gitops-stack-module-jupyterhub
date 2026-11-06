@@ -195,17 +195,13 @@ The following requirements are needed by this module:
 
 The following providers are used by this module:
 
-- [[provider_argocd]] <<provider_argocd,argocd>> (7.18.0)
+- [[provider_argocd]] <<provider_argocd,argocd>> (>= 6)
 
-- [[provider_kubernetes]] <<provider_kubernetes,kubernetes>> (3.5.0)
+- [[provider_utils]] <<provider_utils,utils>> (>= 1)
 
-- [[provider_null]] <<provider_null,null>> (3.3.2)
+- [[provider_null]] <<provider_null,null>> (>= 3)
 
-- [[provider_utils]] <<provider_utils,utils>> (2.7.0)
-
-=== Modules
-
-No modules.
+- [[provider_kubernetes]] <<provider_kubernetes,kubernetes>>
 
 === Resources
 
@@ -222,32 +218,17 @@ The following resources are used by this module:
 
 The following input variables are required:
 
-==== [[input_base_domain]] <<input_base_domain,base_domain>>
-
-Description: Base domain of the cluster. Value used for the ingress' URL of the application.
-
-Type: `string`
-
 ==== [[input_cluster_name]] <<input_cluster_name,cluster_name>>
 
 Description: Name given to the cluster. Value used for naming some the resources created by the module.
 
 Type: `string`
 
-==== [[input_database]] <<input_database,database>>
+==== [[input_base_domain]] <<input_base_domain,base_domain>>
 
-Description: database configuration
+Description: Base domain of the cluster. Value used for the ingress' URL of the application.
 
-Type:
-[source,hcl]
-----
-object({
-    user     = string
-    password = string
-    database = string
-    endpoint = string
-  })
-----
+Type: `string`
 
 ==== [[input_storage]] <<input_storage,storage>>
 
@@ -264,9 +245,88 @@ object({
   })
 ----
 
+==== [[input_database]] <<input_database,database>>
+
+Description: database configuration
+
+Type:
+[source,hcl]
+----
+object({
+    user     = string
+    password = string
+    database = string
+    endpoint = string
+  })
+----
+
 === Optional Inputs
 
 The following input variables are optional (have default values):
+
+==== [[input_subdomain]] <<input_subdomain,subdomain>>
+
+Description: Subdomain of the cluster. Value used for the ingress' URL of the application.
+
+Type: `string`
+
+Default: `"apps"`
+
+==== [[input_argocd_project]] <<input_argocd_project,argocd_project>>
+
+Description: Name of the Argo CD AppProject where the Application should be created. If not set, the Application will be created in a new AppProject only for this Application.
+
+Type: `string`
+
+Default: `null`
+
+==== [[input_argocd_labels]] <<input_argocd_labels,argocd_labels>>
+
+Description: Labels to attach to the Argo CD Application resource.
+
+Type: `map(string)`
+
+Default: `{}`
+
+==== [[input_destination_cluster]] <<input_destination_cluster,destination_cluster>>
+
+Description: Destination cluster where the application should be deployed.
+
+Type: `string`
+
+Default: `"in-cluster"`
+
+==== [[input_target_revision]] <<input_target_revision,target_revision>>
+
+Description: Override of target revision of the application chart.
+
+Type: `string`
+
+Default: `"v1.8.0"`
+
+==== [[input_cluster_issuer]] <<input_cluster_issuer,cluster_issuer>>
+
+Description: SSL certificate issuer to use. Usually you would configure this value as `letsencrypt-staging` or `letsencrypt-prod` on your root `*.tf` files.
+
+Type: `string`
+
+Default: `"selfsigned-issuer"`
+
+==== [[input_enable_service_monitor]] <<input_enable_service_monitor,enable_service_monitor>>
+
+Description: Enable Prometheus ServiceMonitor in the Helm chart.
+
+Type: `bool`
+
+Default: `true`
+
+==== [[input_helm_values]] <<input_helm_values,helm_values>>
+
+Description: Helm chart value overrides. They should be passed as a list of HCL structures.
+
+Type: `any`
+
+Default: `[]`
 
 ==== [[input_app_autosync]] <<input_app_autosync,app_autosync>>
 
@@ -292,30 +352,6 @@ Default:
 }
 ----
 
-==== [[input_argocd_labels]] <<input_argocd_labels,argocd_labels>>
-
-Description: Labels to attach to the Argo CD Application resource.
-
-Type: `map(string)`
-
-Default: `{}`
-
-==== [[input_argocd_project]] <<input_argocd_project,argocd_project>>
-
-Description: Name of the Argo CD AppProject where the Application should be created. If not set, the Application will be created in a new AppProject only for this Application.
-
-Type: `string`
-
-Default: `null`
-
-==== [[input_cluster_issuer]] <<input_cluster_issuer,cluster_issuer>>
-
-Description: SSL certificate issuer to use. Usually you would configure this value as `letsencrypt-staging` or `letsencrypt-prod` on your root `*.tf` files.
-
-Type: `string`
-
-Default: `"selfsigned-issuer"`
-
 ==== [[input_dependency_ids]] <<input_dependency_ids,dependency_ids>>
 
 Description: IDs of the other modules on which this module depends on.
@@ -324,21 +360,13 @@ Type: `map(string)`
 
 Default: `{}`
 
-==== [[input_destination_cluster]] <<input_destination_cluster,destination_cluster>>
+==== [[input_namespace_labels]] <<input_namespace_labels,namespace_labels>>
 
-Description: Destination cluster where the application should be deployed.
+Description: Labels to apply to the destination namespace managed by Argo CD (requires CreateNamespace=true).
 
-Type: `string`
+Type: `map(string)`
 
-Default: `"in-cluster"`
-
-==== [[input_enable_service_monitor]] <<input_enable_service_monitor,enable_service_monitor>>
-
-Description: Enable Prometheus ServiceMonitor in the Helm chart.
-
-Type: `bool`
-
-Default: `true`
+Default: `{}`
 
 ==== [[input_gateway_name]] <<input_gateway_name,gateway_name>>
 
@@ -355,56 +383,6 @@ Description: Namespace where the Istio Gateway resource is deployed.
 Type: `string`
 
 Default: `"istio-ingress"`
-
-==== [[input_gpu_scheduling]] <<input_gpu_scheduling,gpu_scheduling>>
-
-Description: Scheduling constraints applied to user pods when a GPU is requested. Clusters that expose `nvidia.com/gpu` usually taint the GPU nodes, so a pod requesting the extended resource stays Pending until it tolerates the taint and, when a node advertises a GPU label, selects those nodes. Both values are only applied to the GPU profile choices, never to the CPU-only ones.
-
-Type:
-[source,hcl]
-----
-object({
-    node_selector = optional(map(string), {})
-    tolerations = optional(list(object({
-      key      = optional(string)
-      operator = optional(string)
-      value    = optional(string)
-      effect   = optional(string)
-    })), [])
-  })
-----
-
-Default: `null`
-
-==== [[input_helm_values]] <<input_helm_values,helm_values>>
-
-Description: Helm chart value overrides. They should be passed as a list of HCL structures.
-
-Type: `any`
-
-Default: `[]`
-
-==== [[input_mlflow]] <<input_mlflow,mlflow>>
-
-Description: mlflow configuration
-
-Type:
-[source,hcl]
-----
-object({
-    endpoint = string
-  })
-----
-
-Default: `null`
-
-==== [[input_namespace_labels]] <<input_namespace_labels,namespace_labels>>
-
-Description: Labels to apply to the destination namespace managed by Argo CD (requires CreateNamespace=true).
-
-Type: `map(string)`
-
-Default: `{}`
 
 ==== [[input_oidc]] <<input_oidc,oidc>>
 
@@ -476,6 +454,20 @@ object({
 
 Default: `null`
 
+==== [[input_mlflow]] <<input_mlflow,mlflow>>
+
+Description: mlflow configuration
+
+Type:
+[source,hcl]
+----
+object({
+    endpoint = string
+  })
+----
+
+Default: `null`
+
 ==== [[input_ray]] <<input_ray,ray>>
 
 Description: kuberay configuration
@@ -489,22 +481,6 @@ object({
 ----
 
 Default: `null`
-
-==== [[input_subdomain]] <<input_subdomain,subdomain>>
-
-Description: Subdomain of the cluster. Value used for the ingress' URL of the application.
-
-Type: `string`
-
-Default: `"apps"`
-
-==== [[input_target_revision]] <<input_target_revision,target_revision>>
-
-Description: Override of target revision of the application chart.
-
-Type: `string`
-
-Default: `"v1.8.0"`
 
 ==== [[input_user_groups]] <<input_user_groups,user_groups>>
 
@@ -559,9 +535,33 @@ object({
 
 Default: `null`
 
+==== [[input_gpu_scheduling]] <<input_gpu_scheduling,gpu_scheduling>>
+
+Description: Scheduling constraints applied to user pods when a GPU is requested. Clusters that expose `nvidia.com/gpu` usually taint the GPU nodes, so a pod requesting the extended resource stays Pending until it tolerates the taint and, when a node advertises a GPU label, selects those nodes. Both values are only applied to the GPU profile choices, never to the CPU-only ones.
+
+Type:
+[source,hcl]
+----
+object({
+    node_selector = optional(map(string), {})
+    tolerations = optional(list(object({
+      key      = optional(string)
+      operator = optional(string)
+      value    = optional(string)
+      effect   = optional(string)
+    })), [])
+  })
+----
+
+Default: `null`
+
 === Outputs
 
 The following outputs are exported:
+
+==== [[output_id]] <<output_id,id>>
+
+Description: ID to pass other modules in order to refer to this module as a dependency.
 
 ==== [[output_cluster_dns]] <<output_cluster_dns,cluster_dns>>
 
@@ -574,10 +574,6 @@ Description: Jupyterhub cluster ip internal
 ==== [[output_endpoint]] <<output_endpoint,endpoint>>
 
 Description: Jupyterhub endpoint external
-
-==== [[output_id]] <<output_id,id>>
-
-Description: ID to pass other modules in order to refer to this module as a dependency.
 // END_TF_DOCS
 
 === Reference in table format 
@@ -586,7 +582,7 @@ Description: ID to pass other modules in order to refer to this module as a depe
 [%collapsible]
 ====
 // BEGIN_TF_TABLES
-== Requirements
+= Requirements
 
 [cols="a,a",options="header,autowidth"]
 |===
@@ -596,22 +592,18 @@ Description: ID to pass other modules in order to refer to this module as a depe
 |[[requirement_utils]] <<requirement_utils,utils>> |>= 1
 |===
 
-== Providers
+= Providers
 
 [cols="a,a",options="header,autowidth"]
 |===
 |Name |Version
-|[[provider_argocd]] <<provider_argocd,argocd>> |7.18.0
-|[[provider_kubernetes]] <<provider_kubernetes,kubernetes>> |3.5.0
-|[[provider_null]] <<provider_null,null>> |3.3.2
-|[[provider_utils]] <<provider_utils,utils>> |2.7.0
+|[[provider_null]] <<provider_null,null>> |>= 3
+|[[provider_argocd]] <<provider_argocd,argocd>> |>= 6
+|[[provider_utils]] <<provider_utils,utils>> |>= 1
+|[[provider_kubernetes]] <<provider_kubernetes,kubernetes>> |n/a
 |===
 
-== Modules
-
-No modules.
-
-== Resources
+= Resources
 
 [cols="a,a",options="header,autowidth"]
 |===
@@ -624,11 +616,71 @@ No modules.
 |https://registry.terraform.io/providers/cloudposse/utils/latest/docs/data-sources/deep_merge_yaml[utils_deep_merge_yaml.values] |data source
 |===
 
-== Inputs
+= Inputs
 
 [cols="a,a,a,a,a",options="header,autowidth"]
 |===
 |Name |Description |Type |Default |Required
+|[[input_cluster_name]] <<input_cluster_name,cluster_name>>
+|Name given to the cluster. Value used for naming some the resources created by the module.
+|`string`
+|n/a
+|yes
+
+|[[input_base_domain]] <<input_base_domain,base_domain>>
+|Base domain of the cluster. Value used for the ingress' URL of the application.
+|`string`
+|n/a
+|yes
+
+|[[input_subdomain]] <<input_subdomain,subdomain>>
+|Subdomain of the cluster. Value used for the ingress' URL of the application.
+|`string`
+|`"apps"`
+|no
+
+|[[input_argocd_project]] <<input_argocd_project,argocd_project>>
+|Name of the Argo CD AppProject where the Application should be created. If not set, the Application will be created in a new AppProject only for this Application.
+|`string`
+|`null`
+|no
+
+|[[input_argocd_labels]] <<input_argocd_labels,argocd_labels>>
+|Labels to attach to the Argo CD Application resource.
+|`map(string)`
+|`{}`
+|no
+
+|[[input_destination_cluster]] <<input_destination_cluster,destination_cluster>>
+|Destination cluster where the application should be deployed.
+|`string`
+|`"in-cluster"`
+|no
+
+|[[input_target_revision]] <<input_target_revision,target_revision>>
+|Override of target revision of the application chart.
+|`string`
+|`"v1.8.0"`
+|no
+
+|[[input_cluster_issuer]] <<input_cluster_issuer,cluster_issuer>>
+|SSL certificate issuer to use. Usually you would configure this value as `letsencrypt-staging` or `letsencrypt-prod` on your root `*.tf` files.
+|`string`
+|`"selfsigned-issuer"`
+|no
+
+|[[input_enable_service_monitor]] <<input_enable_service_monitor,enable_service_monitor>>
+|Enable Prometheus ServiceMonitor in the Helm chart.
+|`bool`
+|`true`
+|no
+
+|[[input_helm_values]] <<input_helm_values,helm_values>>
+|Helm chart value overrides. They should be passed as a list of HCL structures.
+|`any`
+|`[]`
+|no
+
 |[[input_app_autosync]] <<input_app_autosync,app_autosync>>
 |Automated sync options for the Argo CD Application resource.
 |
@@ -655,69 +707,16 @@ object({
 
 |no
 
-|[[input_argocd_labels]] <<input_argocd_labels,argocd_labels>>
-|Labels to attach to the Argo CD Application resource.
-|`map(string)`
-|`{}`
-|no
-
-|[[input_argocd_project]] <<input_argocd_project,argocd_project>>
-|Name of the Argo CD AppProject where the Application should be created. If not set, the Application will be created in a new AppProject only for this Application.
-|`string`
-|`null`
-|no
-
-|[[input_base_domain]] <<input_base_domain,base_domain>>
-|Base domain of the cluster. Value used for the ingress' URL of the application.
-|`string`
-|n/a
-|yes
-
-|[[input_cluster_issuer]] <<input_cluster_issuer,cluster_issuer>>
-|SSL certificate issuer to use. Usually you would configure this value as `letsencrypt-staging` or `letsencrypt-prod` on your root `*.tf` files.
-|`string`
-|`"selfsigned-issuer"`
-|no
-
-|[[input_cluster_name]] <<input_cluster_name,cluster_name>>
-|Name given to the cluster. Value used for naming some the resources created by the module.
-|`string`
-|n/a
-|yes
-
-|[[input_database]] <<input_database,database>>
-|database configuration
-|
-
-[source]
-----
-object({
-    user     = string
-    password = string
-    database = string
-    endpoint = string
-  })
-----
-
-|n/a
-|yes
-
 |[[input_dependency_ids]] <<input_dependency_ids,dependency_ids>>
 |IDs of the other modules on which this module depends on.
 |`map(string)`
 |`{}`
 |no
 
-|[[input_destination_cluster]] <<input_destination_cluster,destination_cluster>>
-|Destination cluster where the application should be deployed.
-|`string`
-|`"in-cluster"`
-|no
-
-|[[input_enable_service_monitor]] <<input_enable_service_monitor,enable_service_monitor>>
-|Enable Prometheus ServiceMonitor in the Helm chart.
-|`bool`
-|`true`
+|[[input_namespace_labels]] <<input_namespace_labels,namespace_labels>>
+|Labels to apply to the destination namespace managed by Argo CD (requires CreateNamespace=true).
+|`map(string)`
+|`{}`
 |no
 
 |[[input_gateway_name]] <<input_gateway_name,gateway_name>>
@@ -730,52 +729,6 @@ object({
 |Namespace where the Istio Gateway resource is deployed.
 |`string`
 |`"istio-ingress"`
-|no
-
-|[[input_gpu_scheduling]] <<input_gpu_scheduling,gpu_scheduling>>
-|Scheduling constraints applied to user pods when a GPU is requested. Clusters that expose `nvidia.com/gpu` usually taint the GPU nodes, so a pod requesting the extended resource stays Pending until it tolerates the taint and, when a node advertises a GPU label, selects those nodes. Both values are only applied to the GPU profile choices, never to the CPU-only ones.
-|
-
-[source]
-----
-object({
-    node_selector = optional(map(string), {})
-    tolerations = optional(list(object({
-      key      = optional(string)
-      operator = optional(string)
-      value    = optional(string)
-      effect   = optional(string)
-    })), [])
-  })
-----
-
-|`null`
-|no
-
-|[[input_helm_values]] <<input_helm_values,helm_values>>
-|Helm chart value overrides. They should be passed as a list of HCL structures.
-|`any`
-|`[]`
-|no
-
-|[[input_mlflow]] <<input_mlflow,mlflow>>
-|mlflow configuration
-|
-
-[source]
-----
-object({
-    endpoint = string
-  })
-----
-
-|`null`
-|no
-
-|[[input_namespace_labels]] <<input_namespace_labels,namespace_labels>>
-|Labels to apply to the destination namespace managed by Argo CD (requires CreateNamespace=true).
-|`map(string)`
-|`{}`
 |no
 
 |[[input_oidc]] <<input_oidc,oidc>>
@@ -848,20 +801,6 @@ object({
 |`null`
 |no
 
-|[[input_ray]] <<input_ray,ray>>
-|kuberay configuration
-|
-
-[source]
-----
-object({
-    endpoint = string
-  })
-----
-
-|`null`
-|no
-
 |[[input_storage]] <<input_storage,storage>>
 |MinIO S3 bucket configuration values for the bucket where the archived metrics will be stored.
 |
@@ -879,16 +818,49 @@ object({
 |n/a
 |yes
 
-|[[input_subdomain]] <<input_subdomain,subdomain>>
-|Subdomain of the cluster. Value used for the ingress' URL of the application.
-|`string`
-|`"apps"`
+|[[input_database]] <<input_database,database>>
+|database configuration
+|
+
+[source]
+----
+object({
+    user     = string
+    password = string
+    database = string
+    endpoint = string
+  })
+----
+
+|n/a
+|yes
+
+|[[input_mlflow]] <<input_mlflow,mlflow>>
+|mlflow configuration
+|
+
+[source]
+----
+object({
+    endpoint = string
+  })
+----
+
+|`null`
 |no
 
-|[[input_target_revision]] <<input_target_revision,target_revision>>
-|Override of target revision of the application chart.
-|`string`
-|`"v1.8.0"`
+|[[input_ray]] <<input_ray,ray>>
+|kuberay configuration
+|
+
+[source]
+----
+object({
+    endpoint = string
+  })
+----
+
+|`null`
 |no
 
 |[[input_user_groups]] <<input_user_groups,user_groups>>
@@ -945,17 +917,37 @@ object({
 |`null`
 |no
 
+|[[input_gpu_scheduling]] <<input_gpu_scheduling,gpu_scheduling>>
+|Scheduling constraints applied to user pods when a GPU is requested. Clusters that expose `nvidia.com/gpu` usually taint the GPU nodes, so a pod requesting the extended resource stays Pending until it tolerates the taint and, when a node advertises a GPU label, selects those nodes. Both values are only applied to the GPU profile choices, never to the CPU-only ones.
+|
+
+[source]
+----
+object({
+    node_selector = optional(map(string), {})
+    tolerations = optional(list(object({
+      key      = optional(string)
+      operator = optional(string)
+      value    = optional(string)
+      effect   = optional(string)
+    })), [])
+  })
+----
+
+|`null`
+|no
+
 |===
 
-== Outputs
+= Outputs
 
 [cols="a,a",options="header,autowidth"]
 |===
 |Name |Description
+|[[output_id]] <<output_id,id>> |ID to pass other modules in order to refer to this module as a dependency.
 |[[output_cluster_dns]] <<output_cluster_dns,cluster_dns>> |Jupyterhub cluster dns
 |[[output_cluster_ip]] <<output_cluster_ip,cluster_ip>> |Jupyterhub cluster ip internal
 |[[output_endpoint]] <<output_endpoint,endpoint>> |Jupyterhub endpoint external
-|[[output_id]] <<output_id,id>> |ID to pass other modules in order to refer to this module as a dependency.
 |===
 // END_TF_TABLES
 ====

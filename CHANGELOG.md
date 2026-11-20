@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.1](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v2.0.0...v2.0.1) (2026-11-20)
+
+
+### 🔥 Bug Fixes
+
+* use kubernetes_service_v1 data source ([#17](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/issues/17)) ([db6bed3](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/db6bed363c880803868575f5e11f94eddb8dbd31))
+
 ## [2.0.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v1.8.0...v2.0.0) (2026-11-20)
 
 

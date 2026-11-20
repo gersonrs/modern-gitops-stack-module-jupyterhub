@@ -221,11 +221,11 @@ The following requirements are needed by this module:
 
 The following providers are used by this module:
 
-- [[provider_null]] <<provider_null,null>> (~> 3.3)
+- [[provider_utils]] <<provider_utils,utils>> (~> 2.7)
 
 - [[provider_argocd]] <<provider_argocd,argocd>> (~> 7.18)
 
-- [[provider_utils]] <<provider_utils,utils>> (~> 2.7)
+- [[provider_null]] <<provider_null,null>> (~> 3.3)
 
 - [[provider_kubernetes]] <<provider_kubernetes,kubernetes>>
 
@@ -237,7 +237,7 @@ The following resources are used by this module:
 - https://registry.terraform.io/providers/argoproj-labs/argocd/latest/docs/resources/project[argocd_project.this] (resource)
 - https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource[null_resource.dependencies] (resource)
 - https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource[null_resource.this] (resource)
-- https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/data-sources/service[kubernetes_service.jupyterhub] (data source)
+- https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/data-sources/service_v1[kubernetes_service_v1.jupyterhub] (data source)
 - https://registry.terraform.io/providers/cloudposse/utils/latest/docs/data-sources/deep_merge_yaml[utils_deep_merge_yaml.values] (data source)
 
 === Required Inputs
@@ -328,7 +328,7 @@ Description: Override of target revision of the application chart.
 
 Type: `string`
 
-Default: `"v2.0.0"`
+Default: `"v2.0.1"`
 
 ==== [[input_cluster_issuer]] <<input_cluster_issuer,cluster_issuer>>
 
@@ -624,8 +624,8 @@ Description: Jupyterhub endpoint external
 [cols="a,a",options="header,autowidth"]
 |===
 |Name |Version
-|[[provider_utils]] <<provider_utils,utils>> |~> 2.7
 |[[provider_argocd]] <<provider_argocd,argocd>> |~> 7.18
+|[[provider_utils]] <<provider_utils,utils>> |~> 2.7
 |[[provider_null]] <<provider_null,null>> |~> 3.3
 |[[provider_kubernetes]] <<provider_kubernetes,kubernetes>> |n/a
 |===
@@ -639,7 +639,7 @@ Description: Jupyterhub endpoint external
 |https://registry.terraform.io/providers/argoproj-labs/argocd/latest/docs/resources/project[argocd_project.this] |resource
 |https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource[null_resource.dependencies] |resource
 |https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource[null_resource.this] |resource
-|https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/data-sources/service[kubernetes_service.jupyterhub] |data source
+|https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/data-sources/service_v1[kubernetes_service_v1.jupyterhub] |data source
 |https://registry.terraform.io/providers/cloudposse/utils/latest/docs/data-sources/deep_merge_yaml[utils_deep_merge_yaml.values] |data source
 |===
 
@@ -687,7 +687,7 @@ Description: Jupyterhub endpoint external
 |[[input_target_revision]] <<input_target_revision,target_revision>>
 |Override of target revision of the application chart.
 |`string`
-|`"v2.0.0"`
+|`"v2.0.1"`
 |no
 
 |[[input_cluster_issuer]] <<input_cluster_issuer,cluster_issuer>>

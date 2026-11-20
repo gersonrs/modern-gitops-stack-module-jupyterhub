@@ -111,7 +111,7 @@ resource "null_resource" "this" {
   ]
 }
 
-data "kubernetes_service" "jupyterhub" {
+data "kubernetes_service_v1" "jupyterhub" {
   metadata {
     name      = "proxy-public"
     namespace = "jupyterhub"

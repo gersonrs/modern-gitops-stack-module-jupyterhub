@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.2](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v2.0.1...v2.0.2) (2026-11-21)
+
+
+### 🔥 Bug Fixes
+
+* make the cluster_ip output null-safe ([#19](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/issues/19)) ([2375b38](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/2375b3812bee99969326043916a8d8c728cacba2))
+
 ## [2.0.1](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v2.0.0...v2.0.1) (2026-11-20)
 
 

@@ -9,7 +9,7 @@ output "cluster_dns" {
 }
 output "cluster_ip" {
   description = "Jupyterhub cluster ip internal"
-  value       = data.kubernetes_service_v1.jupyterhub.spec[0].cluster_ip
+  value       = try(data.kubernetes_service_v1.jupyterhub.spec[0].cluster_ip, null)
 }
 
 output "endpoint" {

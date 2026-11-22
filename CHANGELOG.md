@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v2.0.2...v2.1.0) (2026-11-22)
+
+
+### 🚀 New Features
+
+* upgrade jupyterhub chart to 4.4.5 ([#21](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/issues/21)) ([cd9a1ab](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/cd9a1ab6ef8dfe4f5633c36eef8ab993aaad54e1))
+
 ## [2.0.2](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v2.0.1...v2.0.2) (2026-11-21)
 
 

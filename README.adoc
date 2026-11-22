@@ -221,11 +221,11 @@ The following requirements are needed by this module:
 
 The following providers are used by this module:
 
-- [[provider_utils]] <<provider_utils,utils>> (~> 2.7)
+- [[provider_null]] <<provider_null,null>> (~> 3.3)
 
 - [[provider_argocd]] <<provider_argocd,argocd>> (~> 7.18)
 
-- [[provider_null]] <<provider_null,null>> (~> 3.3)
+- [[provider_utils]] <<provider_utils,utils>> (~> 2.7)
 
 - [[provider_kubernetes]] <<provider_kubernetes,kubernetes>>
 
@@ -328,7 +328,7 @@ Description: Override of target revision of the application chart.
 
 Type: `string`
 
-Default: `"v2.0.1"`
+Default: `"v2.0.2"`
 
 ==== [[input_cluster_issuer]] <<input_cluster_issuer,cluster_issuer>>
 
@@ -512,33 +512,33 @@ Default: `null`
 
 Description: Per-group GCP credentials for the notebook servers, resolved at spawn time.
 
-When set, the spawn form gains a group selector listing the groups the  
-authenticated member belongs to, and the notebook starts with that group's  
-GCP service account key. When null the feature is disabled and the form  
+When set, the spawn form gains a group selector listing the groups the
+authenticated member belongs to, and the notebook starts with that group's
+GCP service account key. When null the feature is disabled and the form
 shows only the CPU, memory and GPU fields.
 
-`api_url` is the Compass/Luigi endpoint that returns the groups of a member.  
-The module appends the URL-encoded e-mail of the authenticated user, so the  
+`api_url` is the Compass/Luigi endpoint that returns the groups of a member.
+The module appends the URL-encoded e-mail of the authenticated user, so the
 value must be the path prefix, for example
 `https://luigi-compass.luizalabs.com/groups/member`.
 
-`groups` maps each group slug, exactly as that API returns it, to the GCP  
-project that owns the group service account. The Secret Manager secret is  
-derived from both values with the naming convention already used by the  
+`groups` maps each group slug, exactly as that API returns it, to the GCP
+project that owns the group service account. The Secret Manager secret is
+derived from both values with the naming convention already used by the
 platform:
 
     AUTOMATION_SERVICE_ACCOUNT_JSONKEY_<GROUP_UPPER>_<PROJECT_UPPER>
 
 so a `group-analytics-fraude` group in `maga-bigdata` reads
-`AUTOMATION_SERVICE_ACCOUNT_JSONKEY_GROUP-ANALYTICS-FRAUDE_MAGA-BIGDATA`.  
-Deriving the name instead of accepting it keeps the map small and makes a  
+`AUTOMATION_SERVICE_ACCOUNT_JSONKEY_GROUP-ANALYTICS-FRAUDE_MAGA-BIGDATA`.
+Deriving the name instead of accepting it keeps the map small and makes a
 typo in one group impossible to hide.
 
-`hub_key_secret_name` is the name of a Kubernetes Secret, in the JupyterHub  
-namespace, holding the key of the service account that can read those  
-Secret Manager secrets. The module mounts it into the hub only, never into a  
-notebook, so a compromised notebook can reach the single group it selected  
-and nothing else. The Secret must exist before the module is applied and  
+`hub_key_secret_name` is the name of a Kubernetes Secret, in the JupyterHub
+namespace, holding the key of the service account that can read those
+Secret Manager secrets. The module mounts it into the hub only, never into a
+notebook, so a compromised notebook can reach the single group it selected
+and nothing else. The Secret must exist before the module is applied and
 must use the key `key.json`.
 
 Type:
@@ -602,7 +602,7 @@ Description: Jupyterhub cluster ip internal
 Description: Jupyterhub endpoint external
 // END_TF_DOCS
 
-=== Reference in table format 
+=== Reference in table format
 
 .Show tables
 [%collapsible]
@@ -624,9 +624,9 @@ Description: Jupyterhub endpoint external
 [cols="a,a",options="header,autowidth"]
 |===
 |Name |Version
+|[[provider_null]] <<provider_null,null>> |~> 3.3
 |[[provider_argocd]] <<provider_argocd,argocd>> |~> 7.18
 |[[provider_utils]] <<provider_utils,utils>> |~> 2.7
-|[[provider_null]] <<provider_null,null>> |~> 3.3
 |[[provider_kubernetes]] <<provider_kubernetes,kubernetes>> |n/a
 |===
 
@@ -687,7 +687,7 @@ Description: Jupyterhub endpoint external
 |[[input_target_revision]] <<input_target_revision,target_revision>>
 |Override of target revision of the application chart.
 |`string`
-|`"v2.0.1"`
+|`"v2.0.2"`
 |no
 
 |[[input_cluster_issuer]] <<input_cluster_issuer,cluster_issuer>>

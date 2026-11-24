@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v2.1.0...v2.1.1) (2026-11-24)
+
+
+### 📚 Documentation
+
+* add usage and dependencies to the module documentation ([#23](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/issues/23)) ([7f790d2](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/commit/7f790d24e9adb1169ba604ca54d236fc851b37c8))
+
 ## [2.1.0](https://github.com/gersonrs/modern-gitops-stack-module-jupyterhub/compare/v2.0.2...v2.1.0) (2026-11-22)
 
 

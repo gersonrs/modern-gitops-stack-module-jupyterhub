@@ -1,208 +1,60 @@
 = modern-gitops-stack-module-jupyterhub
 // Document attributes to replace along the document
+:jupyterhub-chart-version: 4.4.5
+:original-repo-url: https://github.com/jupyterhub/zero-to-jupyterhub-k8s
 
-A https://modern-gitops-stack.io[Modern GitOps Stack] module to deploy https://jupyter.org/hub[JupyterHub] on Kubernetes.
+A https://modern-gitops-stack.io[Modern GitOps Stack] module to deploy JupyterHub, which spawns per-user Jupyter notebook servers backed by Keycloak SSO.
 
-== Spawner profiles
+The jupyterhub chart used by this module is shipped in this repository as well, in order to avoid any unwanted behaviors caused by unsupported versions.
 
-The user pod form is driven by KubeSpawner `profile_list`, so a user picks the resources for the server before it starts (the same idea as the Kubeflow notebook form). Three options are offered:
-
-[cols="1,2,2",options="autowidth,header"]
+[cols="1,1,1",options="autowidth,header"]
 |===
-|Option |Input |Notes
-|CPU |Number field, default `1` |Any positive number of vCPU, e.g. `0.5`, `2`, `3.5`
-|Memory |Number field, default `1` |Any positive integer of GB, e.g. `4`, `8`, `16`
-|GPU |Checkbox, unchecked by default |Requests exactly one `nvidia.com/gpu`; the cluster nodes expose a single GPU each
+|Current Chart Version |Original Repository |Default Values
+|*4.4.5* |https://github.com/jupyterhub/zero-to-jupyterhub-k8s/tree/main/jupyterhub[jupyterhub] |https://artifacthub.io/packages/helm/jupyterhub/jupyterhub/4.4.5?modal=values[`values.yaml`]
 |===
 
-The GPU checkbox only requests the extended resource. Clusters that advertise `nvidia.com/gpu` normally taint those nodes, so set `gpu_scheduling` with the `node_selector` and `tolerations` your GPU nodes require; the module applies them to the GPU choices only, never to the CPU-only ones.
+== Usage
 
-[source,hcl]
+This module can be declared by adding the following block to your Terraform configuration:
+
+[source,terraform]
 ----
 module "jupyterhub" {
-  # ...
-  gpu_scheduling = {
-    node_selector = { "nvidia.com/gpu.present" = "true" }
-    tolerations = [
-      {
-        key      = "nvidia.com/gpu"
-        operator = "Exists"
-        effect   = "NoSchedule"
-      },
-    ]
+  source = "git::https://github.com/GersonRS/modern-gitops-stack-module-jupyterhub.git?ref=<RELEASE>"
+
+  cluster_name   = local.cluster_name
+  base_domain    = local.base_domain
+  subdomain      = local.subdomain
+  cluster_issuer = local.cluster_issuer
+  app_autosync   = local.app_autosync
+  storage        = { ... }  # MinIO bucket
+  database       = { ... }  # PostgreSQL connection
+
+  dependency_ids = {
+    postgresql = module.postgresql.id
+    minio      = module.minio.id
+    keycloak   = module.keycloak.id
   }
 }
 ----
 
-NOTE: The GPU checkbox is unchecked by default so the module works on clusters without the NVIDIA device plugin (such as kind). Checking it on such a cluster leaves the pod `Pending` until the plugin and a GPU node exist — that is intentional, because it surfaces the missing capacity instead of silently starting a CPU-only server.
+The application is deployed to the `jupyterhub` namespace.
 
-== Hub image
+== Technical Reference
 
-The hub runs a prebuilt image that already ships the spawner profiles and the custom templates, so no init container clones a repository at pod start. By default the module uses `docker.io/gersonrs/jupyterhub-hub` tagged `hub-<chart-version>`, which is the upstream `quay.io/jupyterhub/k8s-hub` release plus the contents of the https://github.com/GersonRS/jupyterhub-templates[jupyterhub-templates] repository baked in.
+=== Dependencies
 
-Baking the templates into the image buys three things over the init-container approach:
+==== `module.postgresql.id`
 
-* **No network dependency at startup.** The pod no longer clones a Git repository, so a GitHub outage or a rate limit cannot leave the hub serving the stock templates.
-* **Immutable templates.** The files are root-owned and read-only inside the image, so a compromised notebook server cannot rewrite the form every user sees.
-* **Faster and more predictable rollouts.** The image is pulled like any other, cached by the node, and pinned by digest by the same mechanism as the rest of the chart.
+JupyterHub stores its state in PostgreSQL.
 
-The image tag must match the chart version, because the hub image and the chart are released together and a mismatch can break the hub. Bump `hub_image.tag` whenever `helm_values` moves to a new chart release, and set the whole object to override the registry, the repository, or a private mirror:
+==== `module.minio.id`
 
-[source,hcl]
-----
-module "jupyterhub" {
-  # ... unchanged
+User notebooks and data live in MinIO.
 
-  hub_image = {
-    name = "registry.example.com/ml/jupyterhub-hub"
-    tag  = "hub-4.3.2"
-  }
-}
-----
+==== `module.keycloak.id`
 
-== Per-group GCP credentials
-
-When the notebooks must read per-group BigQuery datasets and data-lake tables, set `user_groups`. The form then gains a group selector and the notebook starts with the credential of the selected group.
-
-=== Prerequisites
-
-These exist outside the module and must be in place **before** applying it:
-
-[cols="1,3",options="autowidth,header"]
-|===
-|Item |Detail
-|Group keys in Secret Manager |One secret per group, named `AUTOMATION_SERVICE_ACCOUNT_JSONKEY_<GROUP_UPPER>_<PROJECT_UPPER>`. The module derives that name from the map key and `project`, so the spelling has to match exactly.
-|Reader service account |A GCP service account allowed to read those secrets, with `roles/secretmanager.secretAccessor` granted **on each group secret**, plus `roles/secretmanager.viewer` if you want the version listing to work.
-|Its key in Kubernetes |A Secret in the JupyterHub namespace holding that key under the name `key.json`. The module mounts it into the hub only.
-|===
-
-The module does not create any of these. It has no `kubernetes_secret` and no GCP credential resource, on purpose: a key committed to Terraform state or to git is a long-lived credential that has to be rotated by hand.
-
-[source,bash]
-----
-# The hub needs read access to every group secret it may serve.
-for secret in AUTOMATION_SERVICE_ACCOUNT_JSONKEY_GROUP-ANALYTICS-CLIENTES_MAGA-BIGDATA \
-              AUTOMATION_SERVICE_ACCOUNT_JSONKEY_GROUP-ANALYTICS-FRAUDE_MAGA-BIGDATA; do
-  gcloud secrets add-iam-policy-binding "$secret" \
-    --project=maga-bigdata \
-    --member="serviceAccount:compass-one-vm@maga-bigdata.iam.gserviceaccount.com" \
-    --role=roles/secretmanager.secretAccessor
-done
-
-# The key must be mounted as key.json.
-kubectl create secret generic jupyterhub-hub-gcp \
-  --namespace jupyterhub \
-  --from-file=key.json=./SA.json
-----
-
-=== Configuration
-
-[source,hcl]
-----
-module "jupyterhub" {
-  # ...
-  user_groups = {
-    api_url             = "https://luigi-compass.luizalabs.com/groups/member"
-    hub_key_secret_name = "jupyterhub-hub-gcp"
-    groups = {
-      group-analytics-clientes = { project = "maga-bigdata" }
-      group-analytics-fraude   = { project = "maga-bigdata" }
-    }
-  }
-}
-----
-
-=== How it works
-
-. After login, `Authenticator.post_auth_hook` reads the member e-mail from the OIDC userinfo response and asks the Compass/Luigi API which groups that member belongs to. The result is cached in `auth_state`, because the API answers in several seconds and the form is rendered after login but before the pod exists.
-. `KubeSpawner.profile_list` is replaced by a callable that adds a `group` option listing only the intersection of the member's groups and the configured `groups`.
-. `options_from_form` re-validates the submitted group. KubeSpawner does not check a predefined choice at all, so an unchecked value would otherwise reach `_load_profile` and raise `KeyError`.
-. `KubeSpawner.pre_spawn_hook` reads the group's JSON key from Secret Manager, writes it to a Secret owned by the hub, mounts it read-only and sets `GOOGLE_APPLICATION_CREDENTIALS`. `post_stop_hook` deletes the Secret when the server stops.
-
-The notebook needs no entrypoint: `google-cloud-bigquery`, `google-cloud-storage`, `pandas-gbq` and `gcloud` all read `GOOGLE_APPLICATION_CREDENTIALS` through Application Default Credentials.
-
-[cols="1,2",options="autowidth,header"]
-|===
-|Credential |Scope
-|`hub_key_secret_name` |Reads the per-group keys from Secret Manager. Mounted only in the hub, never in user pods
-|Per-group key |Reads the group's data. Mounted only in the pod of the member who selected that group
-|===
-
-This keeps the blast radius of a compromised notebook to the single group it selected, and lets you revoke access by disabling the Secret Manager version instead of rotating keys across every group.
-
-NOTE: `user_groups` requires `c.Authenticator.enable_auth_state`, which the module enables automatically. The chart already generates `CryptKeeper.keys` from the hub Secret, so no extra key material is needed.
-
-=== Identity providers without a groups claim
-
-SSO Corp returns no groups claim, so leave `use_group_claims = false`. The hub then admits any authenticated employee (`allow_all`) and authorization comes from the group credential instead of a claim. Keep `admin_users` populated so somebody can reach the admin panel.
-
-With an in-cluster Keycloak (the kind example), keep the default `use_group_claims = true` together with `allowed_groups` and `admin_groups`.
-
-== Logging in directly with SSO Corp
-
-The hub can authenticate against SSO Corp without the in-cluster Keycloak in front of it. That removes one federation hop and one token exchange from every login.
-
-[source,hcl]
-----
-oidc = {
-  oauth_url = "https://sso-corp.luizalabs.com/realms/corp/protocol/openid-connect/auth"
-  token_url = "https://sso-corp.luizalabs.com/realms/corp/protocol/openid-connect/token"
-  api_url   = "https://sso-corp.luizalabs.com/realms/corp/protocol/openid-connect/userinfo"
-
-  client_id     = "compass_mgc"
-  client_secret = ""          # public client: SSO Corp registers it without a secret
-
-  use_group_claims = false
-  allowed_groups   = []
-  admin_groups     = []
-  admin_users      = ["santos.gerson"]
-}
-----
-
-Requirements checked against the realm:
-
-[cols="1,1,2",options="autowidth,header"]
-|===
-|Setting |Value |Why
-|Client type |Public (`client_secret = ""`) |`compass_mgc` has no secret. Keycloak answers `invalid_grant` rather than `invalid_client` for an empty secret, so the exchange works.
-|PKCE |`enable_pkce = true` (default) |Mandatory for a public client: with no secret it is the only proof that the code exchange comes from the same party that started the login. The realm advertises `S256`.
-|Redirect URI |`https://<hub>/hub/oauth_callback` |Must be registered on the client. The `compass_mgc` registration accepts it.
-|Scopes |`openid email` |`groups` is dropped because `use_group_claims = false`.
-|===
-
-The login form, the `email` scope and `admin_users` all rely on SSO Corp returning `preferred_username`. When the `email` scope is granted the e-mail claim is used directly; otherwise the username is completed with `user_groups.email_domain` before the Compass lookup, because that API is keyed by e-mail.
-
-WARNING: `oidc.issuer_url` and `oidc.oauth2_proxy_extra_args` are accepted for compatibility with the object the keycloak `oidc_bootstrap` module returns, but `GenericOAuthenticator` never reads them. Pointing `oidc` at SSO Corp does not remove the in-cluster Keycloak; stop passing `oidc = module.oidc.oidc` if you want it gone from the login path.
-
-=== Who can log in
-
-With no groups claim there is nothing for `check_allowed()` to match, so the decision falls back to `allow_all`, which defaults to `true`. **That admits every identity SSO Corp authenticates — every Magalu employee.** Pick the posture you want:
-
-[cols="1,1,1,2",options="autowidth,header"]
-|===
-|Posture |allow_all |allowed_users |Effect
-|Open to the company |`true` |— |Any employee logs in. Simplest, and the default.
-|Explicit allow list |`false` |list of usernames |Only the listed users log in; everyone else gets 403.
-|Open, with exceptions |`true` |— plus `blocked_users` |Everyone except the deny list.
-|===
-
-[source,hcl]
-----
-# Explicit allow list: only these two people may use the hub.
-oidc = {
-  # ...
-  use_group_claims = false
-  allow_all        = false
-  allowed_users    = ["santos.gerson", "maria.silva"]
-  admin_users      = ["santos.gerson"]
-}
-----
-
-Usernames are compared after normalization (lowercase), so list them in lowercase. `blocked_users` is evaluated before `allow_all`, which makes it the way to revoke one person without switching the hub to an allow list. `allowed_users` is not auto-extended with existing users: `allow_existing_users` stays `false`, so removing somebody from the list does lock them out.
-
-NOTE: removing a name from `admin_users` takes effect on that user's next login. `Authenticator.is_admin()` returns `None` rather than `False` for a user outside the list, and `auth_to_user` only writes `admin` when the value is not `None`, so a promoted user would otherwise stay an admin forever. When `user_groups` is enabled, the module's `post_auth_hook` returns an explicit `False` and the user is demoted on the next login. Without `user_groups` there is no hook, so uncheck "admin" for that user once in the hub admin panel (Admin -> Users).
-
-CAUTION: a positive allow list is the only posture where the group selector is enforced twice. With `allow_all = true` any employee can log in, but they still only reach the data of a group the Compass API says they belong to, because `pre_options_from_form` and `pre_spawn_hook` both re-check the submitted group against `auth_state`.
+JupyterHub authenticates through Keycloak.
 
 // BEGIN_TF_DOCS
 === Requirements
